@@ -28,6 +28,23 @@ impl fmt::Display for ParseError {
 impl std::error::Error for ParseError {}
 
 pub fn parse_env_content(content: &str) -> Result<IndexMap<String, String>, ParseError> {
+    parse_env_content_with_options(content, &ParseOptions::default())
+}
+
+#[derive(Debug, Clone)]
+pub struct ParseOptions {
+    pub expand_variables: bool,
+}
+
+impl Default for ParseOptions {
+    fn default() -> Self {
+        Self {
+            expand_variables: true,
+        }
+    }
+}
+
+pub fn parse_env_content_with_options(content: &str, options: &ParseOptions) -> Result<IndexMap<String, String>, ParseError> {
     let mut variables = IndexMap::new();
     let lines: Vec<&str> = content.lines().collect();
     let mut line_idx = 0;
@@ -63,9 +80,14 @@ pub fn parse_env_content(content: &str) -> Result<IndexMap<String, String>, Pars
 
         // Parse and process the value (may consume multiple lines)
         let (parsed_value, lines_consumed) = parse_value_multiline(value_part, &lines[line_idx..], line_num)?;
-        let expanded_value = expand_variables(&parsed_value, &variables);
         
-        variables.insert(key.to_string(), expanded_value);
+        let final_value = if options.expand_variables {
+            expand_variables(&parsed_value, &variables)
+        } else {
+            parsed_value
+        };
+        
+        variables.insert(key.to_string(), final_value);
         line_idx += lines_consumed;
     }
 

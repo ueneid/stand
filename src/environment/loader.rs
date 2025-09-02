@@ -3,7 +3,7 @@ use std::path::Path;
 use std::io;
 use indexmap::IndexMap;
 use anyhow::Result;
-use crate::environment::parser::{parse_env_content, ParseError};
+use crate::environment::parser::{parse_env_content_with_options, ParseOptions, ParseError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError {
@@ -24,6 +24,10 @@ pub enum LoadError {
 }
 
 pub fn load_env_file<P: AsRef<Path>>(path: P) -> Result<IndexMap<String, String>, LoadError> {
+    load_env_file_with_options(path, &ParseOptions::default())
+}
+
+pub fn load_env_file_with_options<P: AsRef<Path>>(path: P, options: &ParseOptions) -> Result<IndexMap<String, String>, LoadError> {
     let path = path.as_ref();
     let path_buf = path.to_path_buf();
 
@@ -53,7 +57,7 @@ pub fn load_env_file<P: AsRef<Path>>(path: P) -> Result<IndexMap<String, String>
     })?;
 
     // Parse the content using our parser
-    parse_env_content(&content).map_err(|parse_error| {
+    parse_env_content_with_options(&content, options).map_err(|parse_error| {
         LoadError::ParseError { 
             path: path_buf, 
             source: parse_error 
