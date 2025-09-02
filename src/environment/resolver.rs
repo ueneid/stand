@@ -121,7 +121,7 @@ impl EnvironmentResolver {
         for (key, value) in &variables {
             let mut expansion_stack = Vec::new(); // Fresh stack for each variable
             let expanded_value =
-                self.expand_value(value, &variables, options, &mut expansion_stack)?;
+                Self::expand_value(value, &variables, options, &mut expansion_stack)?;
             resolved.insert(key.clone(), expanded_value);
         }
 
@@ -129,7 +129,6 @@ impl EnvironmentResolver {
     }
 
     fn expand_value(
-        &self,
         value: &str,
         all_variables: &IndexMap<String, String>,
         options: &ResolutionOptions,
@@ -156,7 +155,7 @@ impl EnvironmentResolver {
                     // Recursively expand the variable value
                     expansion_stack.push(var_name.to_string());
                     let expanded =
-                        self.expand_value(var_value, all_variables, options, expansion_stack)?;
+                        Self::expand_value(var_value, all_variables, options, expansion_stack)?;
                     expansion_stack.pop();
                     expanded
                 } else {
