@@ -1,0 +1,1 @@
+// validate.rs command implementation
