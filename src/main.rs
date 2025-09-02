@@ -13,16 +13,28 @@ fn main() -> anyhow::Result<()> {
             println!("Shell command called with environment: {}", environment);
             std::process::exit(1); // Temporary - will implement properly
         }
-        Commands::Exec { environment, command } => {
-            println!("Exec command called with environment: {} and command: {:?}", environment, command);
+        Commands::Exec {
+            environment,
+            command,
+        } => {
+            println!(
+                "Exec command called with environment: {} and command: {:?}",
+                environment, command
+            );
             std::process::exit(1); // Temporary - will implement properly
         }
         Commands::List => {
             println!("List command called");
             std::process::exit(1); // Temporary - will implement properly
         }
-        Commands::Show { environment, values } => {
-            println!("Show command called with environment: {} and values: {}", environment, values);
+        Commands::Show {
+            environment,
+            values,
+        } => {
+            println!(
+                "Show command called with environment: {} and values: {}",
+                environment, values
+            );
             std::process::exit(1); // Temporary - will implement properly
         }
         Commands::Switch { environment } => {
@@ -30,7 +42,10 @@ fn main() -> anyhow::Result<()> {
             std::process::exit(1); // Temporary - will implement properly
         }
         Commands::Set { name, value } => {
-            println!("Set command called with name: {} and value: {}", name, value);
+            println!(
+                "Set command called with name: {} and value: {}",
+                name, value
+            );
             std::process::exit(1); // Temporary - will implement properly
         }
         Commands::Unset { name } => {

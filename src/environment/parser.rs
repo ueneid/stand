@@ -44,7 +44,10 @@ impl Default for ParseOptions {
     }
 }
 
-pub fn parse_env_content_with_options(content: &str, options: &ParseOptions) -> Result<IndexMap<String, String>, ParseError> {
+pub fn parse_env_content_with_options(
+    content: &str,
+    options: &ParseOptions,
+) -> Result<IndexMap<String, String>, ParseError> {
     let mut variables = IndexMap::new();
     let lines: Vec<&str> = content.lines().collect();
     let mut line_idx = 0;
@@ -61,11 +64,10 @@ pub fn parse_env_content_with_options(content: &str, options: &ParseOptions) -> 
         }
 
         // Find the first '=' that's not inside quotes (use original line to preserve spaces)
-        let eq_pos = find_equals_position(line)
-            .ok_or_else(|| ParseError::InvalidFormat {
-                line: line_num,
-                content: line.to_string(),
-            })?;
+        let eq_pos = find_equals_position(line).ok_or_else(|| ParseError::InvalidFormat {
+            line: line_num,
+            content: line.to_string(),
+        })?;
 
         let key = line[..eq_pos].trim();
         let value_part = &line[eq_pos + 1..];
@@ -79,14 +81,15 @@ pub fn parse_env_content_with_options(content: &str, options: &ParseOptions) -> 
         }
 
         // Parse and process the value (may consume multiple lines)
-        let (parsed_value, lines_consumed) = parse_value_multiline(value_part, &lines[line_idx..], line_num)?;
-        
+        let (parsed_value, lines_consumed) =
+            parse_value_multiline(value_part, &lines[line_idx..], line_num)?;
+
         let final_value = if options.expand_variables {
             expand_variables(&parsed_value, &variables)
         } else {
             parsed_value
         };
-        
+
         variables.insert(key.to_string(), final_value);
         line_idx += lines_consumed;
     }
@@ -121,10 +124,14 @@ fn is_valid_key(key: &str) -> bool {
     !key.is_empty() && key.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
-fn parse_value_multiline(value_part: &str, remaining_lines: &[&str], line_num: usize) -> Result<(String, usize), ParseError> {
+fn parse_value_multiline(
+    value_part: &str,
+    remaining_lines: &[&str],
+    line_num: usize,
+) -> Result<(String, usize), ParseError> {
     // Check if this is a quoted value by looking at the trimmed start
     let trimmed_start = value_part.trim_start();
-    
+
     // Handle quoted values first
     if trimmed_start.starts_with('"') {
         return parse_multiline_double_quoted(remaining_lines, line_num);
@@ -144,10 +151,13 @@ fn parse_value_multiline(value_part: &str, remaining_lines: &[&str], line_num: u
     Ok((value.to_string(), 1))
 }
 
-fn parse_multiline_double_quoted(lines: &[&str], start_line: usize) -> Result<(String, usize), ParseError> {
+fn parse_multiline_double_quoted(
+    lines: &[&str],
+    start_line: usize,
+) -> Result<(String, usize), ParseError> {
     let first_line = lines[0];
     let value_part = &first_line[first_line.find('=').unwrap() + 1..];
-    
+
     if !value_part.trim().starts_with('"') {
         return Err(ParseError::InvalidFormat {
             line: start_line,
@@ -170,7 +180,7 @@ fn parse_multiline_double_quoted(lines: &[&str], start_line: usize) -> Result<(S
     } else {
         // Multi-line case
         content.push_str(current_content);
-        
+
         for (i, line) in lines[1..].iter().enumerate() {
             if let Some(end_pos) = find_closing_quote(line, '"') {
                 if !content.is_empty() {
@@ -196,10 +206,13 @@ fn parse_multiline_double_quoted(lines: &[&str], start_line: usize) -> Result<(S
     Ok((process_escape_sequences(&content)?, lines_consumed))
 }
 
-fn parse_multiline_single_quoted(lines: &[&str], start_line: usize) -> Result<(String, usize), ParseError> {
+fn parse_multiline_single_quoted(
+    lines: &[&str],
+    start_line: usize,
+) -> Result<(String, usize), ParseError> {
     let first_line = lines[0];
     let value_part = &first_line[first_line.find('=').unwrap() + 1..];
-    
+
     if !value_part.trim().starts_with('\'') {
         return Err(ParseError::InvalidFormat {
             line: start_line,
@@ -222,7 +235,7 @@ fn parse_multiline_single_quoted(lines: &[&str], start_line: usize) -> Result<(S
     } else {
         // Multi-line case - single quotes preserve everything literally
         content.push_str(current_content);
-        
+
         for (i, line) in lines[1..].iter().enumerate() {
             if let Some(end_pos) = line.find('\'') {
                 if !content.is_empty() {
@@ -251,20 +264,20 @@ fn parse_multiline_single_quoted(lines: &[&str], start_line: usize) -> Result<(S
 
 fn find_closing_quote(content: &str, quote_char: char) -> Option<usize> {
     let mut escaped = false;
-    
+
     for (i, ch) in content.char_indices() {
         if escaped {
             escaped = false;
             continue;
         }
-        
+
         if ch == '\\' && quote_char == '"' {
             escaped = true;
         } else if ch == quote_char {
             return Some(i);
         }
     }
-    
+
     None
 }
 
@@ -298,21 +311,19 @@ fn process_escape_sequences(value: &str) -> Result<String, ParseError> {
 
 fn expand_variables(value: &str, variables: &IndexMap<String, String>) -> String {
     let mut result = value.to_string();
-    
+
     // Simple variable expansion for ${VAR} pattern
     while let Some(start) = result.find("${") {
         if let Some(end) = result[start..].find('}') {
             let var_name = &result[start + 2..start + end];
-            let replacement = variables.get(var_name)
-                .map(|v| v.as_str())
-                .unwrap_or("");
-            
+            let replacement = variables.get(var_name).map(|v| v.as_str()).unwrap_or("");
+
             result.replace_range(start..start + end + 1, replacement);
         } else {
             break; // No closing brace found
         }
     }
-    
+
     result
 }
 
@@ -340,25 +351,30 @@ mod tests {
 
     #[test]
     fn test_process_escape_sequences() {
-        assert_eq!(process_escape_sequences("line1\\nline2").unwrap(), "line1\nline2");
+        assert_eq!(
+            process_escape_sequences("line1\\nline2").unwrap(),
+            "line1\nline2"
+        );
         assert_eq!(process_escape_sequences("tab\\there").unwrap(), "tab\there");
-        assert_eq!(process_escape_sequences("quote\\\"here").unwrap(), "quote\"here");
-        assert_eq!(process_escape_sequences("backslash\\\\here").unwrap(), "backslash\\here");
+        assert_eq!(
+            process_escape_sequences("quote\\\"here").unwrap(),
+            "quote\"here"
+        );
+        assert_eq!(
+            process_escape_sequences("backslash\\\\here").unwrap(),
+            "backslash\\here"
+        );
     }
 
     #[test]
     fn test_expand_variables() {
         let mut vars = IndexMap::new();
         vars.insert("BASE".to_string(), "https://api.example.com".to_string());
-        
+
         assert_eq!(
             expand_variables("${BASE}/v1", &vars),
             "https://api.example.com/v1"
         );
-        assert_eq!(
-            expand_variables("${UNDEFINED}/v1", &vars),
-            "/v1"
-        );
+        assert_eq!(expand_variables("${UNDEFINED}/v1", &vars), "/v1");
     }
-
 }
