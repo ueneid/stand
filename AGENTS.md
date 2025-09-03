@@ -1,3 +1,8 @@
+# AI Assistant Instructions
+
+All responses and output must be in Japanese.
+This applies to all terminal/CLI/TUI interactions.
+
 # Repository Guidelines
 
 ## Project Structure & Module Organization
@@ -32,9 +37,38 @@
 - **PRs**: Use `.github/pull_request_template.md`. Include: clear description, linked issue (`Closes #123`), key changes, tests added, and local results (`cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`). Add Mermaid diagram where useful.
 
 ## Security & Configuration Tips
-- Config and env files live under project root: `.stand/config.yaml`, `.stand.common.env`, `.stand.<env>.env`. Do not commit secrets; add env files to `.gitignore`.
+- Single config file lives at project root: `.stand` (TOML format) containing all configuration and environment variables. Do not commit secrets; add `.stand` file to `.gitignore` if it contains sensitive data.
 - Never print sensitive values; prefer masked logs.
-- Ensure reasonable file permissions for `.stand/*` files.
+- Ensure reasonable file permissions for `.stand` file (0600 for sensitive data).
+
+### Example .stand file structure:
+```toml
+version = "2.0"
+
+[settings]
+default_environment = "dev"
+show_env_in_prompt = true
+
+# Common variables shared across all environments
+[common]
+APP_NAME = "MyApp"
+LOG_FORMAT = "json"
+
+# Environment-specific variables
+[environments.dev]
+description = "Development environment"
+color = "green"
+DATABASE_URL = "postgres://localhost:5432/dev"
+DEBUG = "true"
+
+[environments.prod]
+description = "Production environment"
+color = "red"
+extends = "dev"  # Inherits from dev environment
+requires_confirmation = true
+DATABASE_URL = "postgres://prod.example.com/myapp"
+DEBUG = "false"
+```
 
 ## Workflow Reference
 - This repo enforces TDD and GitHub Flow. See `docs/development-guideline.md` for required steps before implementation.
