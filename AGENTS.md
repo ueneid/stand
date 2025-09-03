@@ -37,11 +37,11 @@ This applies to all terminal/CLI/TUI interactions.
 - **PRs**: Use `.github/pull_request_template.md`. Include: clear description, linked issue (`Closes #123`), key changes, tests added, and local results (`cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`). Add Mermaid diagram where useful.
 
 ## Security & Configuration Tips
-- Single config file lives at project root: `.stand` (TOML format) containing all configuration and environment variables. Do not commit secrets; add `.stand` file to `.gitignore` if it contains sensitive data.
+- Single config file lives at project root: `.stand.toml` (TOML format) containing all configuration and environment variables. Do not commit secrets; add `.stand.toml` file to `.gitignore` if it contains sensitive data.
 - Never print sensitive values; prefer masked logs.
-- Ensure reasonable file permissions for `.stand` file (0600 for sensitive data).
+- Ensure reasonable file permissions for `.stand.toml` file (0600 for sensitive data).
 
-### Example .stand file structure:
+### Example .stand.toml file structure:
 ```toml
 version = "2.0"
 

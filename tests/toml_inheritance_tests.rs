@@ -28,7 +28,7 @@ DATABASE_URL = "postgres://prod.example.com/myapp"
 DEBUG = "false"
 "#;
 
-    fs::write(dir.path().join(".stand"), toml_content).unwrap();
+    fs::write(dir.path().join(".stand.toml"), toml_content).unwrap();
     
     let result = loader::load_config_toml_with_inheritance(dir.path());
     
@@ -73,7 +73,7 @@ extends = "dev"
 DATABASE_URL = "postgres://prod.example.com/myapp"
 "#;
 
-    fs::write(dir.path().join(".stand"), toml_content).unwrap();
+    fs::write(dir.path().join(".stand.toml"), toml_content).unwrap();
     
     let result = loader::load_config_toml_with_inheritance(dir.path());
     assert!(result.is_err());
@@ -113,7 +113,7 @@ DATABASE_URL = "postgres://prod.example.com/myapp"
 DEBUG = "false"
 "#;
 
-    fs::write(dir.path().join(".stand"), toml_content).unwrap();
+    fs::write(dir.path().join(".stand.toml"), toml_content).unwrap();
     
     let result = loader::load_config_toml_with_inheritance(dir.path());
     

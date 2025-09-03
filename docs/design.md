@@ -120,7 +120,7 @@ EnvironmentVariables
 ### 4.1 Environment Loading Flow
 
 1. **Configuration Discovery**
-   - Search for `.stand` file (TOML format) in current directory
+   - Search for `.stand.toml` file (TOML format) in current directory
    - Validate configuration schema and structure
    - Cache parsed configuration
 
@@ -160,13 +160,13 @@ EnvironmentVariables
 
 ```
 <project-root>/
-├── .stand                 # Single TOML file containing all configuration and variables
-└── .gitignore            # Auto-updated with .stand file
+├── .stand.toml            # Single TOML file containing all configuration and variables
+└── .gitignore            # Auto-updated with .stand.toml file
 ```
 
 ### 5.2 TOML Configuration Format
 
-The `.stand` file uses TOML format and contains:
+The `.stand.toml` file uses TOML format and contains:
 
 ```toml
 version = "2.0"
@@ -278,7 +278,7 @@ Subshells provide complete isolation:
 ### 8.3 Git Integration
 
 Automatically maintain `.gitignore`:
-- Add `.stand` file (if contains sensitive variables)
+- Add `.stand.toml` file (if contains sensitive variables)
 - Preserve existing entries
 - Support for per-environment .gitignore patterns
 

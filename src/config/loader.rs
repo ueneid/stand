@@ -6,9 +6,9 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-/// Load configuration from TOML file (.stand)
+/// Load configuration from TOML file (.stand.toml)
 pub fn load_config_toml(project_path: &Path) -> Result<Configuration, ConfigError> {
-    let config_path = project_path.join(".stand");
+    let config_path = project_path.join(".stand.toml");
 
     if !config_path.exists() {
         return Err(ConfigError::ValidationError {

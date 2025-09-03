@@ -32,7 +32,7 @@ DATABASE_URL = "postgres://prod.example.com/myapp"
 DEBUG = "false"
 "#;
 
-    fs::write(dir.path().join(".stand"), toml_content).unwrap();
+    fs::write(dir.path().join(".stand.toml"), toml_content).unwrap();
     
     // This should work once we implement the TOML loader
     let result = loader::load_config_toml(dir.path());

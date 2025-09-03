@@ -116,7 +116,7 @@ Current solutions either require verbose command prefixes for every execution or
 ### 5.4 Configuration
 
 - **FR-4.1**: Configuration SHALL use TOML format for all data including variables
-- **FR-4.2**: All configuration and environment variables SHALL be stored in a single `.stand` file
+- **FR-4.2**: All configuration and environment variables SHALL be stored in a single `.stand.toml` file
 - **FR-4.3**: Configuration SHALL support comments using TOML syntax
 - **FR-4.4**: Users SHALL be able to validate configuration syntax
 - **FR-4.5**: Configuration SHALL support environment variable expansion (e.g., `${VAR}`)
@@ -155,7 +155,7 @@ Current solutions either require verbose command prefixes for every execution or
 ### 6.4 Security
 
 - **NFR-4.1**: Configuration files SHALL have appropriate file permissions
-- **NFR-4.2**: Sensitive `.stand` files SHALL be automatically gitignored when containing secrets
+- **NFR-4.2**: Sensitive `.stand.toml` files SHALL be automatically gitignored when containing secrets
 - **NFR-4.3**: The tool SHALL warn about overly permissive file permissions
 
 ### 6.5 Portability
@@ -169,7 +169,7 @@ Current solutions either require verbose command prefixes for every execution or
 
 - The tool must be implemented in Rust for performance and safety
 - The command name must be `stand`
-- Configuration files must use the `.stand` prefix
+- Configuration files must use the `.stand.toml` filename
 - The tool must not require root/admin privileges
 - The tool must not modify the user's shell configuration files
 
