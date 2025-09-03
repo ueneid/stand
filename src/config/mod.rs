@@ -18,8 +18,17 @@ pub enum ConfigError {
     #[error("Circular reference detected in environment hierarchy: {cycle:?}")]
     CircularReference { cycle: Vec<String> },
 
-    #[error("Environment file not found: {path}")]
-    FileNotFound { path: String },
+    #[error("Environment file not found: '{configured_path}' (resolved to '{resolved_path}')")]
+    FileNotFound { 
+        configured_path: String,
+        resolved_path: String,
+    },
+
+    #[error("Path is not a file: '{configured_path}' (resolved to '{resolved_path}') - directories are not allowed")]
+    NotAFile { 
+        configured_path: String,
+        resolved_path: String,
+    },
 
     #[error("Environment variable interpolation failed: {variable}")]
     InterpolationError { variable: String },
