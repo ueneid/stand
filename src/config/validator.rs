@@ -109,10 +109,15 @@ fn detect_circular_reference(
 /// Validate common configuration if present
 pub fn validate_common_config(config: &Configuration) -> Result<(), ConfigError> {
     if let Some(common) = &config.common {
-        for file in &common.files {
-            if file.as_os_str().is_empty() {
+        for (key, value) in common {
+            if key.is_empty() {
                 return Err(ConfigError::ValidationError {
-                    message: "Common files cannot be empty paths".to_string(),
+                    message: "Common variable keys cannot be empty".to_string(),
+                });
+            }
+            if value.is_empty() {
+                return Err(ConfigError::ValidationError {
+                    message: format!("Common variable '{}' cannot have empty value", key),
                 });
             }
         }
