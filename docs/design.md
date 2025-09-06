@@ -202,7 +202,61 @@ API_KEY = "${PROD_API_KEY}"  # Environment variable expansion
 DEBUG = "false"
 ```
 
-### 5.3 User Configuration
+### 5.3 Configuration Discovery and Migration
+
+**Discovery Precedence:**
+Stand discovers configuration in the following order:
+1. `.stand.toml` (preferred TOML format)
+2. `.stand/config.yaml` (legacy format, deprecated)
+
+**Migration from YAML to TOML:**
+To migrate from legacy YAML configuration:
+
+Legacy multi-file structure:
+```
+.stand/
+├── config.yaml          # Environment definitions
+├── common.env           # Shared variables  
+├── dev.env              # Development variables
+└── prod.env             # Production variables
+```
+
+New single-file structure:
+```toml
+version = "2.0"
+
+[settings]
+default_environment = "dev"
+
+# Variables shared across all environments
+[common]
+APP_NAME = "MyApplication"
+LOG_FORMAT = "json"
+
+[environments.dev]
+description = "Development environment"
+DATABASE_URL = "postgres://localhost:5432/dev"
+API_KEY = "dev-key-123"
+
+[environments.prod]
+description = "Production environment"
+extends = "dev"  # Inherit from dev environment
+DATABASE_URL = "postgres://prod.example.com/app"
+API_KEY = "${PROD_API_KEY}"
+```
+
+**Variable Interpolation Rules:**
+- Single-pass expansion: `${VAR}` syntax only
+- Error on unterminated placeholders: `${VAR` (missing closing brace)
+- Error on empty variable names: `${}`
+- No nested expansion: `${VAR_${SUFFIX}}` is not supported
+
+**Deprecation Timeline:**
+- Legacy YAML support will be removed in v3.0
+- Deprecation warnings will be shown when YAML config is detected
+- Migration command: `stand migrate` (future feature)
+
+### 5.4 User Configuration
 
 ```
 ~/.config/stand/           # Future: Global configuration

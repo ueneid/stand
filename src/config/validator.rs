@@ -28,7 +28,10 @@ pub fn validate_required_fields(config: &Configuration) -> Result<(), ConfigErro
     for (env_name, env) in &config.environments {
         if env.description.is_empty() {
             return Err(ConfigError::ValidationError {
-                message: format!("Environment '{}' must have a non-empty description", env_name),
+                message: format!(
+                    "Environment '{}' must have a non-empty description",
+                    env_name
+                ),
             });
         }
     }

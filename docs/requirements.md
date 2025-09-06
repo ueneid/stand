@@ -120,6 +120,9 @@ Current solutions either require verbose command prefixes for every execution or
 - **FR-4.3**: Configuration SHALL support comments using TOML syntax
 - **FR-4.4**: Users SHALL be able to validate configuration syntax
 - **FR-4.5**: Configuration SHALL support environment variable expansion (e.g., `${VAR}`)
+- **FR-4.6**: The tool SHALL discover configuration files in order: `.stand.toml`, then `.stand/config.yaml` (legacy)
+- **FR-4.7**: The tool SHALL provide deprecation warnings for legacy YAML configuration
+- **FR-4.8**: The tool SHALL support migration from legacy YAML to TOML configuration
 
 ### 5.5 Shell Compatibility
 
