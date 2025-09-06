@@ -3,12 +3,33 @@ use std::path::{Path, PathBuf};
 
 /// Find the project root directory by searching for .stand.toml or .stand/ directory
 pub fn find_project_root() -> Result<PathBuf> {
-    todo!("Implement project root detection")
+    let current_dir = std::env::current_dir()?;
+    let mut dir = current_dir.as_path();
+    
+    loop {
+        // Check for .stand.toml file
+        if dir.join(".stand.toml").exists() {
+            return Ok(dir.to_path_buf());
+        }
+        
+        // Check for .stand directory (legacy)
+        if dir.join(".stand").exists() && dir.join(".stand").is_dir() {
+            return Ok(dir.to_path_buf());
+        }
+        
+        // Move to parent directory
+        match dir.parent() {
+            Some(parent) => dir = parent,
+            None => break,
+        }
+    }
+    
+    anyhow::bail!("Stand project not found. Run 'stand init' to initialize.")
 }
 
 /// Get the path to the configuration file (.stand.toml)
 pub fn get_config_path(project_root: &Path) -> PathBuf {
-    todo!("Implement config path resolution")
+    project_root.join(".stand.toml")
 }
 
 #[cfg(test)]
@@ -31,7 +52,7 @@ mod tests {
         std::env::set_current_dir(original_dir).unwrap();
         
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), temp_dir.path());
+        assert_eq!(result.unwrap().canonicalize().unwrap(), temp_dir.path().canonicalize().unwrap());
     }
 
     #[test]
@@ -47,7 +68,7 @@ mod tests {
         std::env::set_current_dir(original_dir).unwrap();
         
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), temp_dir.path());
+        assert_eq!(result.unwrap().canonicalize().unwrap(), temp_dir.path().canonicalize().unwrap());
     }
 
     #[test]
@@ -79,7 +100,7 @@ mod tests {
         std::env::set_current_dir(original_dir).unwrap();
         
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), temp_dir.path());
+        assert_eq!(result.unwrap().canonicalize().unwrap(), temp_dir.path().canonicalize().unwrap());
     }
 
     #[test]
