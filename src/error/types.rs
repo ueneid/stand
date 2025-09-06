@@ -129,7 +129,7 @@ mod tests {
             message: "test validation error".to_string(),
         };
         let cli_err = CliError::from_config_error(config_err);
-        
+
         match cli_err {
             CliError::ConfigurationInvalid { reason } => {
                 assert_eq!(reason, "test validation error");
@@ -144,7 +144,7 @@ mod tests {
             name: "test-env".to_string(),
         };
         let cli_err = CliError::from_config_error(config_err);
-        
+
         match cli_err {
             CliError::EnvironmentNotFound { name } => {
                 assert_eq!(name, "test-env");
