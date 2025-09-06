@@ -17,7 +17,7 @@ Provide a consistent, high‑quality review process for this Rust CLI (stand). U
 - No secrets in logs, errors, or fixtures; avoid printing env values by default.
 - File access: validate paths; handle not-found, permission, and directory cases (see loader tests).
 - Command execution: avoid shell injection; prefer argument vectors over string concatenation.
-- Permissions: remind users to keep `.stand/*` files private; avoid overly permissive defaults.
+- Permissions: remind users to keep `.stand.toml` file private; avoid overly permissive defaults.
 - Error messages: informative without leaking sensitive data.
 
 ## Performance

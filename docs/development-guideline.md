@@ -67,7 +67,7 @@ git checkout -b feature/[feature-name]
 #### During Development
 ```bash
 # After each TDD cycle or logical unit of work
-git add [files]
+git add [files] # Specify all the files you changed. **DO NOT USE `.`!!**
 git commit -m "[type]: [description]"
 
 # Commit message types:

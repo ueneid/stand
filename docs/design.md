@@ -78,13 +78,13 @@ graph TB
 Configuration
 ├── version: String
 ├── environments: Map<String, Environment>
-├── common: CommonConfig
+├── common: Option<Map<String, String>>
 └── settings: Settings
 
 Environment
 ├── description: String
 ├── extends: Option<String>
-├── files: Vec<PathBuf>
+├── variables: Map<String, String>
 ├── color: Option<Color>
 └── requires_confirmation: bool
 
@@ -109,8 +109,9 @@ State
 
 ```
 EnvironmentVariables
-├── base: Map<String, String>      // From common files
-├── specific: Map<String, String>  // From environment files
+├── common: Map<String, String>    // From common section
+├── specific: Map<String, String>  // From environment section
+├── inherited: Map<String, String> // From parent environment (extends)
 └── session: Map<String, String>   // Runtime overrides
 ```
 
@@ -119,15 +120,16 @@ EnvironmentVariables
 ### 4.1 Environment Loading Flow
 
 1. **Configuration Discovery**
-   - Search for `.stand/config.yaml` in current directory
-   - Validate configuration schema
+   - Search for `.stand.toml` file (TOML format) in current directory
+   - Validate configuration schema and structure
    - Cache parsed configuration
 
 2. **Variable Resolution**
-   - Load common variables if specified
+   - Load common variables from `[common]` section
+   - Resolve environment inheritance using `extends` field
    - Load environment-specific variables
    - Apply session overrides from state
-   - Merge in precedence order (later overrides earlier)
+   - Merge in precedence order: common → parent → environment → session
 
 3. **Environment Activation**
    - For subshell: Create new shell process with variables
@@ -158,19 +160,107 @@ EnvironmentVariables
 
 ```
 <project-root>/
-├── .stand/
-│   ├── config.yaml         # Main configuration
-│   └── state.json         # Runtime state
-├── .stand.common.env      # Base variables
-├── .stand.<env>.env       # Environment-specific variables
-└── .gitignore            # Auto-updated with stand files
+├── .stand.toml            # Single TOML file containing all configuration and variables
+└── .gitignore            # Auto-updated with .stand.toml file
 ```
 
-### 5.2 User Configuration
+### 5.2 TOML Configuration Format
+
+The `.stand.toml` file uses TOML format and contains:
+
+```toml
+version = "2.0"
+
+[settings]
+default_environment = "dev"
+show_env_in_prompt = true
+nested_shell_behavior = "prevent"
+
+# Common variables shared across all environments
+[common]
+APP_NAME = "MyApplication"
+LOG_FORMAT = "json"
+TIMEZONE = "UTC"
+
+# Development environment
+[environments.dev]
+description = "Development environment"
+color = "green"
+requires_confirmation = false
+DATABASE_URL = "postgres://localhost:5432/dev"
+API_KEY = "dev-key-123"
+DEBUG = "true"
+
+# Production environment (inherits from dev)
+[environments.prod]
+description = "Production environment"
+color = "red"
+extends = "dev"
+requires_confirmation = true
+DATABASE_URL = "postgres://prod.example.com/myapp"
+API_KEY = "${PROD_API_KEY}"  # Environment variable expansion
+DEBUG = "false"
+```
+
+### 5.3 Configuration Discovery and Migration
+
+**Discovery Precedence:**
+Stand discovers configuration in the following order:
+1. `.stand.toml` (preferred TOML format)
+2. `.stand/config.yaml` (legacy format, deprecated)
+
+**Migration from YAML to TOML:**
+To migrate from legacy YAML configuration:
+
+Legacy multi-file structure:
+```
+.stand/
+├── config.yaml          # Environment definitions
+├── common.env           # Shared variables  
+├── dev.env              # Development variables
+└── prod.env             # Production variables
+```
+
+New single-file structure:
+```toml
+version = "2.0"
+
+[settings]
+default_environment = "dev"
+
+# Variables shared across all environments
+[common]
+APP_NAME = "MyApplication"
+LOG_FORMAT = "json"
+
+[environments.dev]
+description = "Development environment"
+DATABASE_URL = "postgres://localhost:5432/dev"
+API_KEY = "dev-key-123"
+
+[environments.prod]
+description = "Production environment"
+extends = "dev"  # Inherit from dev environment
+DATABASE_URL = "postgres://prod.example.com/app"
+API_KEY = "${PROD_API_KEY}"
+```
+
+**Variable Interpolation Rules:**
+- Single-pass expansion: `${VAR}` syntax only
+- Error on unterminated placeholders: `${VAR` (missing closing brace)
+- Error on empty variable names: `${}`
+- No nested expansion: `${VAR_${SUFFIX}}` is not supported
+
+**Deprecation Timeline:**
+- Legacy YAML support will be removed in v3.0
+- Deprecation warnings will be shown when YAML config is detected
+- Migration command: `stand migrate` (future feature)
+
+### 5.4 User Configuration
 
 ```
 ~/.config/stand/           # Future: Global configuration
-└── config.yaml           # Future: User preferences
+└── config.toml           # Future: User preferences
 ```
 
 ## 6. Command Processing
@@ -242,18 +332,18 @@ Subshells provide complete isolation:
 ### 8.3 Git Integration
 
 Automatically maintain `.gitignore`:
-- Add `.stand/state.json`
-- Add `.stand.*.env` patterns
+- Add `.stand.toml` file (if contains sensitive variables)
 - Preserve existing entries
+- Support for per-environment .gitignore patterns
 
 ## 9. Performance Considerations
 
 ### 9.1 Optimization Strategies
 
-- **Lazy Loading**: Parse files only when needed
-- **Caching**: Keep configuration in memory during session
+- **Lazy Loading**: Parse configuration only when needed
+- **Caching**: Keep parsed TOML in memory during session
 - **Minimal Allocations**: Reuse buffers where possible
-- **Parallel I/O**: Load multiple env files concurrently
+- **Fast TOML Parsing**: Single file parsing is more efficient than multiple files
 
 ### 9.2 Binary Size Optimization
 
@@ -273,8 +363,9 @@ Automatically maintain `.gitignore`:
 
 ### 10.2 Test Coverage Areas
 
-- Configuration parsing and validation
-- Variable resolution precedence
+- TOML configuration parsing and validation
+- Variable resolution precedence (common → parent → environment → session)
+- Environment inheritance through `extends` field
 - Shell detection and prompt formatting
 - Subshell creation and cleanup
 - Command execution and exit codes

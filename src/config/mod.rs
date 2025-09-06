@@ -19,13 +19,13 @@ pub enum ConfigError {
     CircularReference { cycle: Vec<String> },
 
     #[error("Environment file not found: '{configured_path}' (resolved to '{resolved_path}')")]
-    FileNotFound { 
+    FileNotFound {
         configured_path: String,
         resolved_path: String,
     },
 
     #[error("Path is not a file: '{configured_path}' (resolved to '{resolved_path}') - directories are not allowed")]
-    NotAFile { 
+    NotAFile {
         configured_path: String,
         resolved_path: String,
     },
@@ -43,5 +43,11 @@ pub enum ConfigError {
     YamlError {
         #[from]
         source: serde_yaml::Error,
+    },
+
+    #[error("TOML parsing error: {source}")]
+    TomlError {
+        #[from]
+        source: toml::de::Error,
     },
 }

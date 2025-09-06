@@ -91,10 +91,11 @@ Current solutions either require verbose command prefixes for every execution or
 
 - **FR-1.1**: Users SHALL be able to initialize Stand in any directory
 - **FR-1.2**: Users SHALL be able to define multiple named environments (e.g., dev, beta, prod)
-- **FR-1.3**: Each environment SHALL support loading variables from one or more files
-- **FR-1.4**: Environments SHALL support inheriting from a common base configuration
-- **FR-1.5**: Users SHALL be able to list all available environments
-- **FR-1.6**: Users SHALL be able to view environment variables with or without values
+- **FR-1.3**: Each environment SHALL support defining variables within the configuration file
+- **FR-1.4**: Environments SHALL support inheriting from other environments using `extends`
+- **FR-1.5**: Configuration SHALL support common variables shared across all environments
+- **FR-1.6**: Users SHALL be able to list all available environments
+- **FR-1.7**: Users SHALL be able to view environment variables with or without values
 
 ### 5.2 Environment Activation
 
@@ -114,10 +115,14 @@ Current solutions either require verbose command prefixes for every execution or
 
 ### 5.4 Configuration
 
-- **FR-4.1**: Configuration SHALL use YAML format for structured data
-- **FR-4.2**: Environment files SHALL use dotenv format for variables
-- **FR-4.3**: Configuration SHALL support comments in environment files
+- **FR-4.1**: Configuration SHALL use TOML format for all data including variables
+- **FR-4.2**: All configuration and environment variables SHALL be stored in a single `.stand.toml` file
+- **FR-4.3**: Configuration SHALL support comments using TOML syntax
 - **FR-4.4**: Users SHALL be able to validate configuration syntax
+- **FR-4.5**: Configuration SHALL support environment variable expansion (e.g., `${VAR}`)
+- **FR-4.6**: The tool SHALL discover configuration files in order: `.stand.toml`, then `.stand/config.yaml` (legacy)
+- **FR-4.7**: The tool SHALL provide deprecation warnings for legacy YAML configuration
+- **FR-4.8**: The tool SHALL support migration from legacy YAML to TOML configuration
 
 ### 5.5 Shell Compatibility
 
@@ -132,7 +137,7 @@ Current solutions either require verbose command prefixes for every execution or
 ### 6.1 Performance
 
 - **NFR-1.1**: Subshell creation SHALL complete within 100ms
-- **NFR-1.2**: Environment loading SHALL handle 100 variables in under 50ms
+- **NFR-1.2**: TOML parsing and environment loading SHALL handle 100 variables in under 50ms
 - **NFR-1.3**: Command execution overhead SHALL not exceed 20ms
 - **NFR-1.4**: Binary size SHALL be under 10MB
 
@@ -153,7 +158,7 @@ Current solutions either require verbose command prefixes for every execution or
 ### 6.4 Security
 
 - **NFR-4.1**: Configuration files SHALL have appropriate file permissions
-- **NFR-4.2**: Sensitive files SHALL be automatically gitignored
+- **NFR-4.2**: Sensitive `.stand.toml` files SHALL be automatically gitignored when containing secrets
 - **NFR-4.3**: The tool SHALL warn about overly permissive file permissions
 
 ### 6.5 Portability
@@ -167,7 +172,7 @@ Current solutions either require verbose command prefixes for every execution or
 
 - The tool must be implemented in Rust for performance and safety
 - The command name must be `stand`
-- Configuration files must use the `.stand` prefix
+- Configuration files must use the `.stand.toml` filename
 - The tool must not require root/admin privileges
 - The tool must not modify the user's shell configuration files
 

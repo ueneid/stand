@@ -233,7 +233,7 @@ settings:
 #[test]
 fn test_config_interpolation_missing_env_var() {
     let dir = tempdir().unwrap();
-    
+
     setup_config_file(
         &dir,
         r#"
@@ -293,7 +293,7 @@ settings:
 #[test]
 fn test_config_interpolation_unterminated_placeholder() {
     let dir = tempdir().unwrap();
-    
+
     setup_config_file(
         &dir,
         r#"
@@ -318,7 +318,7 @@ settings:
 #[test]
 fn test_config_interpolation_empty_variable_name() {
     let dir = tempdir().unwrap();
-    
+
     setup_config_file(
         &dir,
         r#"
@@ -445,16 +445,19 @@ settings:
 #[test]
 fn test_config_validation_empty_environments() {
     let dir = tempdir().unwrap();
-    setup_config_file(&dir, r#"
+    setup_config_file(
+        &dir,
+        r#"
 version: "1.0"
 environments: {}
 settings:
   default_environment: "dev"
-"#);
+"#,
+    );
 
     let result = loader::load_config_with_validation(dir.path());
     assert!(result.is_err());
-    
+
     let error_msg = format!("{}", result.unwrap_err());
     assert!(error_msg.contains("environments"));
 }
@@ -462,7 +465,9 @@ settings:
 #[test]
 fn test_config_validation_empty_default_environment() {
     let dir = tempdir().unwrap();
-    setup_config_file(&dir, r#"
+    setup_config_file(
+        &dir,
+        r#"
 version: "1.0"
 environments:
   dev:
@@ -470,11 +475,12 @@ environments:
     files: [".stand.dev.env"]
 settings:
   default_environment: ""
-"#);
+"#,
+    );
 
     let result = loader::load_config_with_validation(dir.path());
     assert!(result.is_err());
-    
+
     let error_msg = format!("{}", result.unwrap_err());
     assert!(error_msg.contains("default_environment"));
 }
@@ -482,7 +488,9 @@ settings:
 #[test]
 fn test_config_validation_empty_description() {
     let dir = tempdir().unwrap();
-    setup_config_file(&dir, r#"
+    setup_config_file(
+        &dir,
+        r#"
 version: "1.0"
 environments:
   dev:
@@ -490,19 +498,22 @@ environments:
     files: [".stand.dev.env"]
 settings:
   default_environment: "dev"
-"#);
+"#,
+    );
 
     let result = loader::load_config_with_validation(dir.path());
     assert!(result.is_err());
-    
+
     let error_msg = format!("{}", result.unwrap_err());
     assert!(error_msg.contains("non-empty description"));
 }
 
-#[test] 
+#[test]
 fn test_config_validation_invalid_common_files() {
     let dir = tempdir().unwrap();
-    setup_config_file(&dir, r#"
+    setup_config_file(
+        &dir,
+        r#"
 version: "1.0"
 common:
   files: ["", "valid-file.env"]
@@ -512,11 +523,12 @@ environments:
     files: [".stand.dev.env"]
 settings:
   default_environment: "dev"
-"#);
+"#,
+    );
 
     let result = loader::load_config_with_validation(dir.path());
     assert!(result.is_err());
-    
+
     let error_msg = format!("{}", result.unwrap_err());
     assert!(error_msg.contains("empty paths"));
 }
@@ -524,7 +536,9 @@ settings:
 #[test]
 fn test_config_hierarchical_merge_color_and_confirmation() {
     let dir = tempdir().unwrap();
-    setup_config_file(&dir, r#"
+    setup_config_file(
+        &dir,
+        r#"
 version: "1.0"
 environments:
   base:
@@ -543,19 +557,20 @@ environments:
     color: "yellow"
 settings:
   default_environment: "dev"
-"#);
+"#,
+    );
 
     let result = loader::load_config_with_hierarchy(dir.path());
     assert!(result.is_ok());
-    
+
     let config = result.unwrap();
     let dev_env = &config.environments["dev"];
     let staging_env = &config.environments["staging"];
-    
+
     // Dev should inherit color and requires_confirmation from base
     assert_eq!(dev_env.color, Some("blue".to_string()));
     assert_eq!(dev_env.requires_confirmation, Some(true));
-    
+
     // Staging should override color but inherit requires_confirmation
     assert_eq!(staging_env.color, Some("yellow".to_string()));
     assert_eq!(staging_env.requires_confirmation, Some(true));
@@ -564,7 +579,9 @@ settings:
 #[test]
 fn test_config_file_deduplication() {
     let dir = tempdir().unwrap();
-    setup_config_file(&dir, r#"
+    setup_config_file(
+        &dir,
+        r#"
 version: "1.0"
 common:
   files: [".stand.common.env", ".stand.base.env"]
@@ -578,14 +595,15 @@ environments:
     files: [".stand.dev.env", ".stand.common.env"]
 settings:
   default_environment: "dev"
-"#);
+"#,
+    );
 
     let result = loader::load_config_with_hierarchy(dir.path());
     assert!(result.is_ok());
-    
+
     let config = result.unwrap();
     let dev_env = &config.environments["dev"];
-    
+
     // Files should be deduplicated: common files first, then parent, then child (no duplicates)
     // Expected: .stand.common.env, .stand.base.env, .stand.other.env, .stand.dev.env
     assert_eq!(dev_env.files.len(), 4);
