@@ -1,5 +1,6 @@
 use clap::Parser;
 use stand::cli::commands::{Cli, Commands};
+use stand::commands::{current, validate};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -53,12 +54,12 @@ fn main() -> anyhow::Result<()> {
             std::process::exit(1); // Temporary - will implement properly
         }
         Commands::Validate => {
-            println!("Validate command called");
-            std::process::exit(1); // Temporary - will implement properly
+            validate::handle_validate()?;
         }
         Commands::Current => {
-            println!("Current command called");
-            std::process::exit(1); // Temporary - will implement properly
+            current::handle_current()?;
         }
     }
+
+    Ok(())
 }

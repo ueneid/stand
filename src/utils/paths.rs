@@ -108,4 +108,3 @@ mod tests {
         assert_eq!(config_path, project_root.join(".stand.toml"));
     }
 }
-
