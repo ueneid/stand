@@ -24,20 +24,20 @@ Based on the provided option, perform one of the following actions:
 
 1. Create a PR description following the **exact format** of the PR template in English
 2. **Add a Mermaid diagram** that visualizes the changes made in this PR
-3. Execute `gh pr create --draft` with the generated title and description
+3. Create a PR with the generated title and description
 
 ### With -p option:
 
 1. Push current branch to remote repository using `git push -u origin <current-branch>`
 2. Create a PR description following the **exact format** of the PR template in English
 3. **Add a Mermaid diagram** that visualizes the changes made in this PR
-4. Execute `gh pr create --draft` with the generated title and description
+4. Create a PR with the generated title and description
 
 ### With -u option:
 
 1. Create a PR description following the **exact format** of the PR template in English
 2. **Add a Mermaid diagram** that visualizes the changes made in this PR
-3. Update existing pull request description using `gh pr edit --body <description>`
+3. Update existing pull request description
 
 ### Requirements:
 
