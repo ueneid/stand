@@ -4,7 +4,12 @@ use std::path::{Path, PathBuf};
 /// Find the project root directory by searching for .stand.toml or .stand/ directory
 pub fn find_project_root() -> Result<PathBuf> {
     let current_dir = std::env::current_dir()?;
-    let mut dir = current_dir.as_path();
+    find_project_root_from(&current_dir)
+}
+
+/// Find the project root directory starting from a given path
+pub fn find_project_root_from(start_dir: &Path) -> Result<PathBuf> {
+    let mut dir = start_dir;
 
     loop {
         // Check for .stand.toml file
@@ -44,12 +49,7 @@ mod tests {
         let config_file = temp_dir.path().join(".stand.toml");
         fs::write(&config_file, "version = \"2.0\"").unwrap();
 
-        // Change to temp directory to simulate being in project
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp_dir.path()).unwrap();
-
-        let result = find_project_root();
-        std::env::set_current_dir(original_dir).unwrap();
+        let result = find_project_root_from(temp_dir.path());
 
         assert!(result.is_ok());
         assert_eq!(
@@ -64,11 +64,7 @@ mod tests {
         let stand_dir = temp_dir.path().join(".stand");
         fs::create_dir(&stand_dir).unwrap();
 
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp_dir.path()).unwrap();
-
-        let result = find_project_root();
-        std::env::set_current_dir(original_dir).unwrap();
+        let result = find_project_root_from(temp_dir.path());
 
         assert!(result.is_ok());
         assert_eq!(
@@ -81,11 +77,7 @@ mod tests {
     fn test_find_project_root_not_found() {
         let temp_dir = TempDir::new().unwrap();
 
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp_dir.path()).unwrap();
-
-        let result = find_project_root();
-        std::env::set_current_dir(original_dir).unwrap();
+        let result = find_project_root_from(temp_dir.path());
 
         assert!(result.is_err());
     }
@@ -99,11 +91,7 @@ mod tests {
         let sub_dir = temp_dir.path().join("subdir");
         fs::create_dir(&sub_dir).unwrap();
 
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(&sub_dir).unwrap();
-
-        let result = find_project_root();
-        std::env::set_current_dir(original_dir).unwrap();
+        let result = find_project_root_from(&sub_dir);
 
         assert!(result.is_ok());
         assert_eq!(
@@ -120,3 +108,4 @@ mod tests {
         assert_eq!(config_path, project_root.join(".stand.toml"));
     }
 }
+

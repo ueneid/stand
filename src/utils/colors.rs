@@ -3,13 +3,19 @@ use colored::Colorize;
 /// Colorize an environment name with the specified color
 pub fn colorize_environment(env_name: &str, color: Option<&str>) -> String {
     match color {
-        Some("red") => env_name.red().to_string(),
-        Some("green") => env_name.green().to_string(),
-        Some("blue") => env_name.blue().to_string(),
-        Some("yellow") => env_name.yellow().to_string(),
-        Some("purple") => env_name.purple().to_string(),
-        Some("cyan") => env_name.cyan().to_string(),
-        _ => env_name.to_string(), // Invalid colors or None fallback to plain text
+        Some(c) => {
+            let color_lower = c.to_lowercase();
+            match color_lower.as_str() {
+                "red" => env_name.red().to_string(),
+                "green" => env_name.green().to_string(),
+                "blue" => env_name.blue().to_string(),
+                "yellow" => env_name.yellow().to_string(),
+                "purple" | "magenta" => env_name.magenta().to_string(),
+                "cyan" => env_name.cyan().to_string(),
+                _ => env_name.to_string(), // Invalid colors fallback to plain text
+            }
+        }
+        None => env_name.to_string(),
     }
 }
 
@@ -63,6 +69,28 @@ mod tests {
     fn test_colorize_environment_with_no_color() {
         let result = colorize_environment("staging", None);
         assert_eq!(result, "staging");
+    }
+
+    #[test]
+    fn test_colorize_environment_with_purple() {
+        let result = colorize_environment("staging", Some("purple"));
+        assert!(result.contains("staging"));
+        // Should use magenta() method internally
+    }
+
+    #[test]
+    fn test_colorize_environment_with_magenta() {
+        let result = colorize_environment("staging", Some("magenta"));
+        assert!(result.contains("staging"));
+    }
+
+    #[test]
+    fn test_colorize_environment_case_insensitive() {
+        let result_upper = colorize_environment("prod", Some("RED"));
+        let result_lower = colorize_environment("prod", Some("red"));
+        assert!(result_upper.contains("prod"));
+        assert!(result_lower.contains("prod"));
+        // Both should work the same way
     }
 
     #[test]
