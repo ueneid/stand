@@ -4,6 +4,9 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 /// Get the path to the state file
 pub fn get_state_file_path() -> Result<PathBuf> {
     let project_root = find_project_root()?;
@@ -50,6 +53,29 @@ pub fn save_state(state: &State) -> Result<()> {
 
     fs::write(&state_path, content)
         .with_context(|| format!("Failed to write state file: {}", state_path.display()))?;
+
+    // Set secure permissions (0600) on Unix systems
+    set_secure_permissions(&state_path)?;
+
+    Ok(())
+}
+
+/// Set secure file permissions for the state file
+fn set_secure_permissions(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(path)?.permissions();
+        perms.set_mode(0o600); // Owner read/write only
+        fs::set_permissions(path, perms)
+            .with_context(|| format!("Failed to set permissions for {}", path.display()))?;
+    }
+
+    #[cfg(windows)]
+    {
+        // On Windows, files are typically secure by default within user directories
+        // Could potentially use Windows ACL APIs here for additional security
+        // For now, we rely on the default NTFS permissions
+    }
 
     Ok(())
 }

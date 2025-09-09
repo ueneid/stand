@@ -22,7 +22,7 @@ pub fn handle_current() -> Result<()> {
         }
         Err(e) => {
             println!("❌ Failed to load state: {}", e);
-            std::process::exit(1);
+            anyhow::bail!("Failed to load state")
         }
     }
 }

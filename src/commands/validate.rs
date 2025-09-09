@@ -44,7 +44,7 @@ pub fn handle_validate() -> Result<()> {
         Err(e) => {
             println!("❌ Configuration validation failed:");
             println!("  {}", e);
-            std::process::exit(1);
+            anyhow::bail!("Configuration validation failed")
         }
     }
 }
