@@ -1,6 +1,7 @@
 use stand::config::loader;
 use std::fs;
 use tempfile::tempdir;
+use serial_test::serial;
 
 #[test]
 fn test_interpolation_unterminated_placeholder() {
@@ -79,6 +80,7 @@ DATABASE_URL = "postgres://localhost:5432/dev"
 }
 
 #[test]
+#[serial]
 fn test_interpolation_multiple_variables_success() {
     let dir = tempdir().unwrap();
 
@@ -119,6 +121,7 @@ DATABASE_URL = "postgres://${PREFIX}_${VERSION}.example.com/app"
 }
 
 #[test]
+#[serial]
 fn test_interpolation_in_common_variables() {
     let dir = tempdir().unwrap();
 

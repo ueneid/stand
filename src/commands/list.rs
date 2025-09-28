@@ -2,7 +2,7 @@ use crate::config::loader;
 use anyhow::{anyhow, Result};
 use std::path::Path;
 
-/// 利用可能な環境を一覧表示する
+/// Lists all available environments from the configuration file
 pub fn list_environments(project_path: &Path) -> Result<String> {
     let config = loader::load_config_toml(project_path)?;
 
@@ -12,7 +12,7 @@ pub fn list_environments(project_path: &Path) -> Result<String> {
 
     let default_env = &config.settings.default_environment;
 
-    // 環境一覧をアルファベット順にソート
+    // Sort environments alphabetically
     let mut env_names: Vec<_> = config.environments.keys().collect();
     env_names.sort();
 
@@ -28,7 +28,7 @@ pub fn list_environments(project_path: &Path) -> Result<String> {
     Ok(output)
 }
 
-/// 環境の1行を整形する
+/// Formats a single environment line for display
 fn format_environment_line(
     name: &str,
     env: &crate::config::types::Environment,
