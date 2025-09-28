@@ -1,5 +1,7 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
+use std::fs;
+use tempfile::tempdir;
 
 #[test]
 fn test_cli_shows_help() {
@@ -37,5 +39,56 @@ fn test_cli_parses_shell_command() {
 #[test]
 fn test_cli_parses_list_command() {
     let mut cmd = Command::cargo_bin("stand").unwrap();
-    cmd.arg("list").assert().failure(); // Expecting failure for now
+    cmd.arg("list").assert().failure(); // Should fail without .stand.toml file
+}
+
+#[test]
+fn test_cli_list_command_with_config() {
+    let dir = tempdir().unwrap();
+    let config_content = r#"
+version = "2.0"
+
+[settings]
+default_environment = "dev"
+
+[environments.dev]
+description = "Development environment"
+color = "green"
+
+[environments.prod]
+description = "Production environment"
+color = "red"
+requires_confirmation = true
+"#;
+
+    let config_path = dir.path().join(".stand.toml");
+    fs::write(&config_path, config_content).unwrap();
+
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path())
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Available environments:"))
+        .stdout(predicate::str::contains("→ dev"))
+        .stdout(predicate::str::contains("Development environment"))
+        .stdout(predicate::str::contains("prod"))
+        .stdout(predicate::str::contains("Production environment"))
+        .stdout(predicate::str::contains("[green]"))
+        .stdout(predicate::str::contains("[red]"))
+        .stdout(predicate::str::contains("確認要"))
+        .stdout(predicate::str::contains("→ indicates default environment"));
+}
+
+#[test]
+fn test_cli_list_command_no_config() {
+    let dir = tempdir().unwrap();
+    // No .stand.toml file created
+
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path())
+        .arg("list")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Error:"));
 }

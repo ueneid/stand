@@ -1,75 +1,54 @@
 # AI Assistant Instructions
 
-All responses and output must be in Japanese.
-This applies to all terminal/CLI/TUI interactions.
+## AI Assistant Communication Language
+- **Chat responses to user**: Japanese
 
-# Repository Guidelines
+## Development Artifact Language Standards
+- **Git commit messages**: English
+- **PR titles and descriptions**: English
+- **Code comments and documentation**: English
 
-## Project Structure & Module Organization
-- `src/`: Rust sources organized by domain (`cli/`, `commands/`, `environment/`, `config/`, `shell/`, `state/`, `utils/`). Entry points: `src/main.rs`, `src/lib.rs`.
-- `tests/`: Integration tests (e.g., `cli_tests.rs`, `env_*_tests.rs`).
-- `docs/`: Design, requirements, and workflow docs.
-- `.github/`: Pull request template and checks.
-- `Cargo.toml`: Dependencies, metadata; Rust 2021 edition.
+## Development Workflow Guidelines
 
-## Build, Test, and Development Commands
-- `cargo build`: Debug build; compiles the CLI.
-- `cargo run -- <subcommand>`: Run locally (e.g., `cargo run -- list`).
-- `cargo test`: Run unit and integration tests.
-- `cargo fmt` / `cargo fmt -- --check`: Format / verify formatting.
-- `cargo clippy -- -D warnings`: Lint; treat warnings as errors.
-- `cargo build --release`: Optimized binary.
+### Test-Driven Development (TDD)
+- **Mandatory TDD Cycle**: RED → GREEN → REFACTOR
+- No production code without failing test first
+- Write tests BEFORE implementation
+- Commit after each TDD cycle
 
-## Coding Style & Naming Conventions
-- **Language**: Rust (edition 2021); 4‑space indentation.
-- **Naming**: `snake_case` for functions/modules, `CamelCase` for types, `SCREAMING_SNAKE_CASE` for constants and env keys.
-- **Formatting/Linting**: Use `rustfmt` and `clippy` before pushing.
-- **Errors**: Prefer `anyhow::Result` at boundaries; define library errors with `thiserror`.
+### Coding Style & Conventions
+- **Language**: Rust (edition 2021); 4-space indentation
+- **Naming**: `snake_case` for functions/modules, `CamelCase` for types, `SCREAMING_SNAKE_CASE` for constants and env keys
+- **Formatting/Linting**: Use `rustfmt` and `clippy` before pushing
+- **Errors**: Prefer `anyhow::Result` at boundaries; define library errors with `thiserror`
 
-## Testing Guidelines
-- **Framework**: Built‑in Rust tests; integration tests in `tests/` and unit tests behind `#[cfg(test)]` in modules.
-- **Naming**: Describe behavior (e.g., `test_cli_shows_help`, `test_parse_variable_expansion`).
-- **Running**: `cargo test`, or a single test `cargo test <name>`.
-- **Coverage**: Optional `cargo tarpaulin --out Html` (if installed).
+### Testing Standards
+- **Framework**: Built-in Rust tests; integration tests in `tests/` and unit tests behind `#[cfg(test)]` in modules
+- **Naming**: Describe behavior (e.g., `test_cli_shows_help`, `test_parse_variable_expansion`)
+- **Environment Variable Tests**: Use `#[serial]` attribute to prevent race conditions
+- **Coverage**: 80% minimum coverage target
 
-## Commit & Pull Request Guidelines
-- **Commits**: Small, focused; follow TDD cycle (RED→GREEN→REFACTOR). Prefix types: `test:`, `feat:`, `refactor:`, `docs:`, `fix:`.
-- **PRs**: Use `.github/pull_request_template.md`. Include: clear description, linked issue (`Closes #123`), key changes, tests added, and local results (`cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`). Add Mermaid diagram where useful.
+### Commit & Pull Request Guidelines
+- **Commits**: Small, focused; follow TDD cycle. Prefix types: `test:`, `feat:`, `refactor:`, `docs:`, `fix:`
+- **Git Rules**: Never use `git add .` - always specify files explicitly
+- **PRs**: Use `.github/pull_request_template.md`. Include: clear description, linked issue (`Closes #123`), key changes, tests added, and local results (`cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`)
 
-## Security & Configuration Tips
-- Single config file lives at project root: `.stand.toml` (TOML format) containing all configuration and environment variables. Do not commit secrets; add `.stand.toml` file to `.gitignore` if it contains sensitive data.
-- Never print sensitive values; prefer masked logs.
-- Ensure reasonable file permissions for `.stand.toml` file (0600 for sensitive data).
+### Security Guidelines
+- Never print sensitive values; prefer masked logs
+- Do not commit secrets to repository
+- Ensure reasonable file permissions for configuration files (0600 for sensitive data)
 
-### Example .stand.toml file structure:
-```toml
-version = "2.0"
+## Required Reading Order
+Before starting ANY coding task, read these files in order:
+1. **README.md** - Project overview and setup instructions
+2. **docs/architecture.md** - High-level system design
+3. **docs/development-guideline.md** - Detailed TDD workflow
+4. **docs/design.md** - Detailed design decisions
+5. **docs/requirements.md** - Feature specifications
+6. **docs/pr-review-guidelines.md** - PR review checklist
 
-[settings]
-default_environment = "dev"
-show_env_in_prompt = true
-
-# Common variables shared across all environments
-[common]
-APP_NAME = "MyApp"
-LOG_FORMAT = "json"
-
-# Environment-specific variables
-[environments.dev]
-description = "Development environment"
-color = "green"
-DATABASE_URL = "postgres://localhost:5432/dev"
-DEBUG = "true"
-
-[environments.prod]
-description = "Production environment"
-color = "red"
-extends = "dev"  # Inherits from dev environment
-requires_confirmation = true
-DATABASE_URL = "postgres://prod.example.com/myapp"
-DEBUG = "false"
-```
-
-## Workflow Reference
-- This repo enforces TDD and GitHub Flow. See `docs/development-guideline.md` for required steps before implementation.
+## Implementation Planning
+- Always present implementation plan before coding
+- Break down complex tasks into smaller steps
+- Use TodoWrite tool to track progress throughout implementation
 
