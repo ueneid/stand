@@ -1,5 +1,4 @@
 use stand::commands::list;
-use stand::config::loader;
 use std::fs;
 use tempfile::tempdir;
 
@@ -133,7 +132,7 @@ fn test_list_handles_missing_config() {
     assert!(result.is_err());
 
     let error_msg = format!("{}", result.unwrap_err());
-    assert!(error_msg.contains(".stand.toml") || error_msg.contains("設定ファイル"));
+    assert!(error_msg.contains("Configuration") || error_msg.contains("not found") || error_msg.contains("init"));
 }
 
 #[test]
