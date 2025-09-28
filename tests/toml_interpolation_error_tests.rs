@@ -71,7 +71,11 @@ DATABASE_URL = "postgres://localhost:5432/dev"
     assert!(result.is_err());
 
     let error_msg = format!("{}", result.unwrap_err());
-    assert!(error_msg.contains("NONEXISTENT_VAR") || error_msg.contains("not found") || error_msg.contains("undefined"));
+    assert!(
+        error_msg.contains("NONEXISTENT_VAR")
+            || error_msg.contains("not found")
+            || error_msg.contains("undefined")
+    );
 }
 
 #[test]
@@ -103,7 +107,10 @@ DATABASE_URL = "postgres://${PREFIX}_${VERSION}.example.com/app"
     let config = result.unwrap();
     let dev_env = &config.environments["dev"];
     assert_eq!(dev_env.description, "API api v1 for users");
-    assert_eq!(dev_env.variables["DATABASE_URL"], "postgres://api_v1.example.com/app");
+    assert_eq!(
+        dev_env.variables["DATABASE_URL"],
+        "postgres://api_v1.example.com/app"
+    );
 
     // 環境変数をクリーンアップ
     std::env::remove_var("PREFIX");

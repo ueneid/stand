@@ -36,7 +36,8 @@ fn format_environment_line(
 ) -> String {
     let marker = if is_default { "→" } else { " " };
 
-    let color_part = env.color
+    let color_part = env
+        .color
         .as_ref()
         .map(|c| format!(" [{}]", c))
         .unwrap_or_default();

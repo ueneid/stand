@@ -120,7 +120,9 @@ default_environment = "dev"
     assert!(result.is_err());
 
     let error_msg = format!("{}", result.unwrap_err());
-    assert!(error_msg.contains("環境が定義されていません") || error_msg.contains("No environments"));
+    assert!(
+        error_msg.contains("環境が定義されていません") || error_msg.contains("No environments")
+    );
 }
 
 #[test]
@@ -132,7 +134,11 @@ fn test_list_handles_missing_config() {
     assert!(result.is_err());
 
     let error_msg = format!("{}", result.unwrap_err());
-    assert!(error_msg.contains("Configuration") || error_msg.contains("not found") || error_msg.contains("init"));
+    assert!(
+        error_msg.contains("Configuration")
+            || error_msg.contains("not found")
+            || error_msg.contains("init")
+    );
 }
 
 #[test]

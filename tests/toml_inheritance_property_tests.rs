@@ -36,7 +36,10 @@ DEBUG = "true"
     // 説明は上書きされている
     assert_eq!(dev_env.description, "Development environment");
     // 変数も継承されている
-    assert_eq!(dev_env.variables["DATABASE_URL"], "postgres://base.example.com/app");
+    assert_eq!(
+        dev_env.variables["DATABASE_URL"],
+        "postgres://base.example.com/app"
+    );
     assert_eq!(dev_env.variables["DEBUG"], "true");
 }
 
