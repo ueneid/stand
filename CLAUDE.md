@@ -21,7 +21,12 @@ Before starting ANY task, confirm:
 
 ## Critical Rules Summary
 
-1. **All output in Japanese** (including terminal/CLI/TUI)
+1. **Language Usage**:
+   - Chat responses to user: **Japanese**
+   - Terminal/CLI/TUI output: **Japanese**
+   - Git commit messages: **English**
+   - PR titles and descriptions: **English**
+   - Code comments and documentation: **English**
 2. **TDD is mandatory** - No production code without failing test first
 3. **Implementation plan required** - Present plan before coding
 4. **Never use `git add .`** - Always specify files

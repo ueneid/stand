@@ -1,7 +1,11 @@
 # AI Assistant Instructions
 
-All responses and output must be in Japanese.
-This applies to all terminal/CLI/TUI interactions.
+## Language Usage Guidelines
+- **Chat responses to user**: Japanese
+- **Terminal/CLI/TUI output**: Japanese
+- **Git commit messages**: English
+- **PR titles and descriptions**: English
+- **Code comments and documentation**: English
 
 # Repository Guidelines
 
