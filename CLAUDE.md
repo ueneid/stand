@@ -23,7 +23,7 @@ Before starting ANY task, confirm:
 
 1. **Language Usage**:
    - Chat responses to user: **Japanese**
-   - Terminal/CLI/TUI output: **Japanese**
+   - Terminal/CLI/TUI output: **English**
    - Git commit messages: **English**
    - PR titles and descriptions: **English**
    - Code comments and documentation: **English**
