@@ -1,7 +1,7 @@
+use serial_test::serial;
 use stand::config::loader;
 use std::fs;
 use tempfile::tempdir;
-use serial_test::serial;
 
 #[test]
 fn test_interpolation_unterminated_placeholder() {

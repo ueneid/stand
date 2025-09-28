@@ -153,7 +153,9 @@ DATABASE_URL = "postgres://localhost:5432/dev"
         .assert()
         .success()
         .stdout(predicate::str::contains("APP_NAME=MyApp (from common)"))
-        .stdout(predicate::str::contains("DATABASE_URL=postgres://localhost:5432/dev"));
+        .stdout(predicate::str::contains(
+            "DATABASE_URL=postgres://localhost:5432/dev",
+        ));
 }
 
 #[test]
@@ -177,5 +179,7 @@ description = "Development environment"
         .args(&["show", "nonexistent"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("Environment 'nonexistent' not found"));
+        .stderr(predicate::str::contains(
+            "Environment 'nonexistent' not found",
+        ));
 }
