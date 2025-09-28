@@ -212,30 +212,91 @@ The following practices are strictly forbidden:
 - ❌ Leaving console.log or debug prints in code
 - ❌ Ignoring test failures with `#[ignore]`
 
-## 6. Tools and Commands
+## 6. Build and Development Commands
 
-### Essential Commands
+### Project Setup
 ```bash
-# Run tests
-cargo test
+# Clone and setup
+git clone <repository-url>
+cd stand
+cargo build
 
-# Run specific test
-cargo test test_name
+# Install development tools (optional)
+cargo install cargo-tarpaulin  # For coverage reports
+```
 
-# Run tests with output
-cargo test -- --nocapture
+### Essential Development Commands
+```bash
+# Build project
+cargo build                    # Debug build
+cargo build --release          # Optimized build
 
-# Check code coverage
-cargo tarpaulin --out Html
+# Run locally
+cargo run -- <subcommand>      # Example: cargo run -- list
+cargo run -- --help            # Show help
 
-# Format code
-cargo fmt
+# Testing
+cargo test                     # Run all tests
+cargo test test_name           # Run specific test
+cargo test -- --nocapture     # Run tests with output
+cargo test --package stand     # Run only package tests
 
-# Lint code
-cargo clippy -- -D warnings
+# Code Quality
+cargo fmt                      # Format code
+cargo fmt -- --check          # Verify formatting
+cargo clippy -- -D warnings   # Lint; treat warnings as errors
+cargo check                    # Fast compile check
 
-# Build and test
-cargo build && cargo test
+# Coverage (requires cargo-tarpaulin)
+cargo tarpaulin --out Html     # Generate HTML coverage report
+cargo tarpaulin --out Stdout   # Show coverage in terminal
+
+# Complete validation
+cargo fmt && cargo clippy -- -D warnings && cargo test
+```
+
+### Environment-Specific Testing
+```bash
+# Test with environment variables
+RUST_LOG=debug cargo test -- --nocapture
+
+# Test configuration with serial execution
+cargo test --test "*config*" -- --test-threads=1
+
+# Test CLI integration
+cargo test --test cli_tests
+```
+
+### Development Workflow Commands
+```bash
+# Start new feature
+git checkout main
+git pull origin main
+git checkout -b feature/[feature-name]
+
+# During development (after each TDD cycle)
+cargo test                              # Ensure tests pass
+git add [specific-files]                # Never use 'git add .'
+git commit -m "[type]: [description]"   # Follow commit conventions
+
+# Before pushing
+cargo fmt && cargo clippy -- -D warnings && cargo test
+git push origin feature/[feature-name]
+```
+
+### Debugging and Development
+```bash
+# Run with debug output
+RUST_LOG=debug cargo run -- list
+
+# Check dependencies
+cargo tree
+
+# Update dependencies
+cargo update
+
+# Clean build artifacts
+cargo clean
 ```
 
 ## 7. Continuous Improvement

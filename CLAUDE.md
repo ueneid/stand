@@ -1,52 +1,37 @@
-# CLAUDE.md
+# Claude Code Instructions
 
-## Required Reading Before ANY Coding
+## Primary Reference
 
-**STOP! Read these files IN ORDER before writing any code:**
+**🔗 All coding instructions are in [AGENTS.md](AGENTS.md)**
 
-1. **AGENTS.md** - Primary source of truth
-2. **docs/development-guideline.md** - TDD workflow (mandatory)
-3. **docs/design.md** - Architecture
-4. **docs/requirements.md** - Features
-5. **docs/pr-review-guidelines.md** - PR checklist
+This file serves as a pointer to the main AI assistant instructions. For complete guidelines, workflow requirements, and development standards, refer to AGENTS.md.
 
-## Pre-coding Checklist
+## Quick Summary from AGENTS.md
 
-Before starting ANY task, confirm:
-- [ ] I have read AGENTS.md completely
-- [ ] I have read development-guideline.md completely  
-- [ ] I will follow TDD (RED→GREEN→REFACTOR)
-- [ ] I will write tests BEFORE implementation
-- [ ] I will commit after each TDD cycle
+### Language Usage
+- Chat responses to user: **Japanese**
+- Git commits/PRs/code comments: **English**
 
-## Critical Rules Summary
+### Required Reading Order (from AGENTS.md)
+1. **README.md** - Project overview
+2. **docs/architecture.md** - System design
+3. **docs/development-guideline.md** - TDD workflow
+4. **docs/design.md** - Design decisions
+5. **docs/requirements.md** - Feature specs
+6. **docs/pr-review-guidelines.md** - PR checklist
 
-1. **Language Usage**:
-   - Chat responses to user: **Japanese**
-   - Terminal/CLI/TUI output: **English**
-   - Git commit messages: **English**
-   - PR titles and descriptions: **English**
-   - Code comments and documentation: **English**
-2. **TDD is mandatory** - No production code without failing test first
-3. **Implementation plan required** - Present plan before coding
-4. **Never use `git add .`** - Always specify files
-5. **Commit after each TDD cycle** - Use proper prefixes (test:, feat:, refactor:)
+### Critical Rules (from AGENTS.md)
+- **TDD Mandatory**: RED → GREEN → REFACTOR
+- **Never use `git add .`** - always specify files
+- **Present implementation plan** before coding
+- **Commit after each TDD cycle**
 
-## Quick Reference
-
-- **Config**: `.stand.toml` (TOML format, project root)
-- **Tests**: `cargo test`
-- **Format**: `cargo fmt`
-- **Lint**: `cargo clippy -- -D warnings`
-- **Coverage**: 80% minimum
-
-## If Conflict Arises
-
-Priority order:
-1. AGENTS.md
-2. docs/development-guideline.md
-3. This file
+### Quick Commands (from docs/development-guideline.md)
+```bash
+cargo test                              # Run tests
+cargo fmt && cargo clippy -- -D warnings && cargo test  # Full validation
+```
 
 ---
 
-**Remember**: When in doubt, refer to the source documents. Don't guess - read the actual guidelines.
+**⚠️ Important**: This is only a summary. For complete instructions, workflow details, and all requirements, **read [AGENTS.md](AGENTS.md) first**.
