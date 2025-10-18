@@ -120,7 +120,7 @@ cargo fmt && cargo clippy -- -D warnings && cargo test
 - 🚧 `init` - Initialize new configuration (planned)
 - 🚧 `shell` - Start shell with environment loaded (planned)
 - 🚧 `exec` - Execute command with environment (planned)
-- 🚧 `show` - Show environment variables (planned)
+- ✅ `show` - Show environment variables with source attribution
 - 🚧 `switch` - Switch default environment (planned)
 - 🚧 `set`/`unset` - Modify environment variables (planned)
 

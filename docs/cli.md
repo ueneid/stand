@@ -170,7 +170,15 @@ Variables:
   APP_NAME=MyApp (from common)
 ```
 
-**Implementation Status:** 🚧 Planned
+**Variable Source Attribution:**
+- Variables marked with `(from common)` are inherited from the `[common]` section
+- Variables marked with `(inherited from <env>)` come from an extended environment
+- Variables without annotation are defined locally in the environment
+
+**Security Note:**
+The `--values` flag displays actual values of environment variables. Be cautious when using this flag in shared environments or when sensitive data might be exposed.
+
+**Implementation Status:** ✅ Implemented
 
 ---
 

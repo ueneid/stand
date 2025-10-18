@@ -12,7 +12,7 @@ description: Generate PR description and automatically create pull request on Gi
 
 ## Your task
 
-Based on the provided option, perform one of the following actions:
+Based on the provided option, perform one of the following actions with github-mcp:
 
 ### Options:
 
