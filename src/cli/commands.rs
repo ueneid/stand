@@ -27,6 +27,7 @@ pub enum Commands {
         /// Environment name to use
         environment: String,
         /// Command to execute
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
     },
     /// List all available environments
