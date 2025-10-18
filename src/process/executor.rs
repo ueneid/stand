@@ -58,7 +58,10 @@ mod tests {
     #[test]
     fn test_execute_command_success_exit_code() {
         // Test successful command returns exit code 0
-        let executor = CommandExecutor::new("sh".to_string(), vec!["-c".to_string(), "exit 0".to_string()]);
+        let executor = CommandExecutor::new(
+            "sh".to_string(),
+            vec!["-c".to_string(), "exit 0".to_string()],
+        );
         let exit_code = executor.execute().unwrap();
 
         assert_eq!(exit_code, 0);
@@ -67,7 +70,10 @@ mod tests {
     #[test]
     fn test_execute_command_failure_exit_code() {
         // Test failed command returns non-zero exit code
-        let executor = CommandExecutor::new("sh".to_string(), vec!["-c".to_string(), "exit 42".to_string()]);
+        let executor = CommandExecutor::new(
+            "sh".to_string(),
+            vec!["-c".to_string(), "exit 42".to_string()],
+        );
         let exit_code = executor.execute().unwrap();
 
         assert_eq!(exit_code, 42);
@@ -82,8 +88,13 @@ mod tests {
 
         let executor = CommandExecutor::new(
             "sh".to_string(),
-            vec!["-c".to_string(), "test \"$TEST_VAR\" = \"test_value\" && test \"$ANOTHER_VAR\" = \"another_value\"".to_string()]
-        ).with_env(env_vars);
+            vec![
+                "-c".to_string(),
+                "test \"$TEST_VAR\" = \"test_value\" && test \"$ANOTHER_VAR\" = \"another_value\""
+                    .to_string(),
+            ],
+        )
+        .with_env(env_vars);
 
         let exit_code = executor.execute().unwrap();
         assert_eq!(exit_code, 0);
@@ -94,7 +105,7 @@ mod tests {
         // Test command with multiple arguments
         let executor = CommandExecutor::new(
             "echo".to_string(),
-            vec!["arg1".to_string(), "arg2".to_string(), "arg3".to_string()]
+            vec!["arg1".to_string(), "arg2".to_string(), "arg3".to_string()],
         );
 
         let exit_code = executor.execute().unwrap();

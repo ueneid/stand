@@ -56,7 +56,8 @@ ANOTHER_VAR = "another_value"
         vec![
             "sh".to_string(),
             "-c".to_string(),
-            "test \"$TEST_VAR\" = \"test_value\" && test \"$ANOTHER_VAR\" = \"another_value\"".to_string(),
+            "test \"$TEST_VAR\" = \"test_value\" && test \"$ANOTHER_VAR\" = \"another_value\""
+                .to_string(),
         ],
     )
     .unwrap();
