@@ -1,0 +1,48 @@
+version = "2.0"
+
+[settings]
+default_environment = "dev"
+
+# Common variables shared across all environments
+[common]
+APP_NAME = "MyAwesomeApp"
+LOG_FORMAT = "json"
+TIMEZONE = "UTC"
+
+# Base environment with common settings
+[environments.base]
+description = "Base environment (not meant to be used directly)"
+PORT = "3000"
+LOG_LEVEL = "info"
+CACHE_TTL = "3600"
+
+# Development environment extends base
+[environments.dev]
+description = "Development environment"
+color = "green"
+extends = "base"
+LOG_LEVEL = "debug"  # Override base
+DEBUG = "true"
+DATABASE_URL = "postgres://localhost:5432/myapp_dev"
+REDIS_URL = "redis://localhost:6379/0"
+
+# Staging environment extends dev
+[environments.staging]
+description = "Staging environment"
+color = "yellow"
+extends = "dev"
+LOG_LEVEL = "info"  # Override dev
+DEBUG = "false"     # Override dev
+DATABASE_URL = "postgres://staging.example.com:5432/myapp"
+REDIS_URL = "redis://staging.example.com:6379/0"
+
+# Production environment extends base (not dev)
+[environments.prod]
+description = "Production environment"
+color = "red"
+extends = "base"
+requires_confirmation = true
+LOG_LEVEL = "warn"  # Override base
+DEBUG = "false"
+DATABASE_URL = "postgres://prod.example.com:5432/myapp"
+REDIS_URL = "redis://prod.example.com:6379/0"

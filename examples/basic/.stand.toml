@@ -1,0 +1,23 @@
+version = "2.0"
+
+[settings]
+default_environment = "dev"
+
+# Simple development environment
+[environments.dev]
+description = "Development environment"
+color = "green"
+APP_ENV = "development"
+DEBUG = "true"
+LOG_LEVEL = "debug"
+DATABASE_URL = "postgres://localhost:5432/myapp_dev"
+
+# Simple production environment
+[environments.prod]
+description = "Production environment"
+color = "red"
+requires_confirmation = true
+APP_ENV = "production"
+DEBUG = "false"
+LOG_LEVEL = "error"
+DATABASE_URL = "postgres://prod.example.com:5432/myapp"
