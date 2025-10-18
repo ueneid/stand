@@ -92,3 +92,94 @@ fn test_cli_list_command_no_config() {
         .failure()
         .stderr(predicate::str::contains("Error:"));
 }
+
+#[test]
+fn test_cli_show_command_with_config() {
+    let dir = tempdir().unwrap();
+    let config_content = r#"
+version = "2.0"
+
+[settings]
+default_environment = "dev"
+
+[common]
+APP_NAME = "MyApp"
+
+[environments.dev]
+description = "Development environment"
+color = "green"
+DATABASE_URL = "postgres://localhost:5432/dev"
+DEBUG = "true"
+"#;
+
+    let config_path = dir.path().join(".stand.toml");
+    fs::write(&config_path, config_content).unwrap();
+
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path())
+        .args(&["show", "dev"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Environment: dev"))
+        .stdout(predicate::str::contains("Variables:"))
+        .stdout(predicate::str::contains("APP_NAME (from common)"))
+        .stdout(predicate::str::contains("DATABASE_URL"))
+        .stdout(predicate::str::contains("DEBUG"));
+}
+
+#[test]
+fn test_cli_show_command_with_values() {
+    let dir = tempdir().unwrap();
+    let config_content = r#"
+version = "2.0"
+
+[settings]
+default_environment = "dev"
+
+[common]
+APP_NAME = "MyApp"
+
+[environments.dev]
+description = "Development environment"
+DATABASE_URL = "postgres://localhost:5432/dev"
+"#;
+
+    let config_path = dir.path().join(".stand.toml");
+    fs::write(&config_path, config_content).unwrap();
+
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path())
+        .args(&["show", "dev", "--values"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("APP_NAME=MyApp (from common)"))
+        .stdout(predicate::str::contains(
+            "DATABASE_URL=postgres://localhost:5432/dev",
+        ));
+}
+
+#[test]
+fn test_cli_show_command_nonexistent_env() {
+    let dir = tempdir().unwrap();
+    let config_content = r#"
+version = "2.0"
+
+[settings]
+default_environment = "dev"
+
+[environments.dev]
+description = "Development environment"
+"#;
+
+    let config_path = dir.path().join(".stand.toml");
+    fs::write(&config_path, config_content).unwrap();
+
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path())
+        .args(&["show", "nonexistent"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Environment 'nonexistent' not found",
+        ));
+}
