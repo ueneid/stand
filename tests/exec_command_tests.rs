@@ -177,3 +177,87 @@ DATABASE_URL = "postgres://${DB_HOST}:${DB_PORT}/dev"
     std::env::remove_var("DB_HOST");
     std::env::remove_var("DB_PORT");
 }
+
+#[test]
+fn test_exec_nonexistent_command() {
+    let dir = tempdir().unwrap();
+    let config_content = r#"
+version = "2.0"
+
+[settings]
+default_environment = "dev"
+
+[environments.dev]
+description = "Development environment"
+"#;
+
+    let config_path = dir.path().join(".stand.toml");
+    fs::write(&config_path, config_content).unwrap();
+
+    let result = exec::execute_with_environment(
+        dir.path(),
+        "dev",
+        vec!["nonexistent_command_12345".to_string()],
+    );
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_exec_empty_command() {
+    let dir = tempdir().unwrap();
+    let config_content = r#"
+version = "2.0"
+
+[settings]
+default_environment = "dev"
+
+[environments.dev]
+description = "Development environment"
+"#;
+
+    let config_path = dir.path().join(".stand.toml");
+    fs::write(&config_path, config_content).unwrap();
+
+    let result = exec::execute_with_environment(dir.path(), "dev", vec![]);
+
+    assert!(result.is_err());
+    let error_msg = format!("{}", result.unwrap_err());
+    assert!(error_msg.contains("Command cannot be empty"));
+}
+
+#[test]
+fn test_exec_exit_code_propagation() {
+    let dir = tempdir().unwrap();
+    let config_content = r#"
+version = "2.0"
+
+[settings]
+default_environment = "dev"
+
+[environments.dev]
+description = "Development environment"
+"#;
+
+    let config_path = dir.path().join(".stand.toml");
+    fs::write(&config_path, config_content).unwrap();
+
+    // Test successful command
+    let exit_code =
+        exec::execute_with_environment(dir.path(), "dev", vec!["true".to_string()]).unwrap();
+    assert_eq!(exit_code, 0);
+
+    // Test failed command
+    let exit_code =
+        exec::execute_with_environment(dir.path(), "dev", vec!["false".to_string()]).unwrap();
+    assert_eq!(exit_code, 1);
+
+    // Test custom exit code
+    let exit_code = exec::execute_with_environment(
+        dir.path(),
+        "dev",
+        vec!["sh".to_string(), "-c".to_string(), "exit 42".to_string()],
+    )
+    .unwrap();
+    assert_eq!(exit_code, 42);
+}
