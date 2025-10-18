@@ -1,0 +1,50 @@
+version = "2.0"
+
+[settings]
+default_environment = "dev"
+
+# This example demonstrates variable interpolation using ${VAR} syntax.
+# Stand can reference system environment variables within your configuration.
+
+# To test this example, first set some environment variables:
+#   export DB_HOST=localhost
+#   export DB_PORT=5432
+#   export API_KEY=your_secret_key
+#   export USER_NAME=your_username
+
+[common]
+APP_NAME = "InterpolationDemo"
+# Reference system environment variables
+HOME_DIR = "${HOME}"
+CURRENT_USER = "${USER}"
+
+[environments.dev]
+description = "Development with interpolated variables"
+color = "green"
+# Simple interpolation
+DATABASE_HOST = "${DB_HOST}"
+DATABASE_PORT = "${DB_PORT}"
+# Combining with static text
+DATABASE_URL = "postgres://${DB_HOST}:${DB_PORT}/myapp_dev"
+# Multiple variables in one value
+CONNECTION_STRING = "host=${DB_HOST} port=${DB_PORT} user=${USER_NAME} dbname=myapp"
+# Referencing system paths
+LOG_PATH = "${HOME}/logs/app.log"
+CONFIG_PATH = "${HOME}/.config/myapp"
+# API configuration
+API_KEY = "${API_KEY}"
+API_ENDPOINT = "https://api.example.com/v1"
+
+[environments.prod]
+description = "Production with interpolated variables"
+color = "red"
+requires_confirmation = true
+# Note: Set these environment variables before using prod environment
+# export PROD_DB_HOST=prod.example.com
+# export PROD_DB_PORT=5432
+# export PROD_API_KEY=prod_secret_key
+DATABASE_HOST = "${DB_HOST}"
+DATABASE_PORT = "${DB_PORT}"
+DATABASE_URL = "postgres://${DB_HOST}:${DB_PORT}/myapp_prod"
+API_KEY = "${API_KEY}"
+API_ENDPOINT = "https://api.production.example.com/v1"

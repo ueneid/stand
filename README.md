@@ -72,6 +72,17 @@ DEBUG = "false"
 - **Command Execution**: Execute commands with specific environment variables
 - **Configuration Validation**: Validate configuration file syntax and structure
 
+## Examples
+
+Learn by example! Check out the [examples/](examples/) directory for practical demonstrations:
+
+- **[basic/](examples/basic/)** - Simple environment setup (dev, prod)
+- **[inheritance/](examples/inheritance/)** - Using `extends` for environment inheritance
+- **[web-app/](examples/web-app/)** - Realistic web application configuration
+- **[interpolation/](examples/interpolation/)** - Variable interpolation with `${VAR}` syntax
+
+Each example includes a complete `.stand.toml` configuration and usage instructions. See the [Examples README](examples/README.md) for detailed walkthroughs.
+
 ## Documentation
 
 ### User Documentation
