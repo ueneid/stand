@@ -1,6 +1,6 @@
 use clap::Parser;
 use stand::cli::commands::{Cli, Commands};
-use stand::commands::{current, list, show, validate};
+use stand::commands::{current, exec, list, show, validate};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -16,13 +16,19 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Exec {
             environment,
+            yes,
             command,
         } => {
-            println!(
-                "Exec command called with environment: {} and command: {:?}",
-                environment, command
-            );
-            std::process::exit(1); // Temporary - will implement properly
+            let current_dir = std::env::current_dir()?;
+            match exec::execute_with_environment(&current_dir, &environment, command, yes) {
+                Ok(exit_code) => {
+                    std::process::exit(exit_code);
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
         Commands::List => {
             let current_dir = std::env::current_dir()?;

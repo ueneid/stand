@@ -26,7 +26,11 @@ pub enum Commands {
     Exec {
         /// Environment name to use
         environment: String,
+        /// Skip confirmation prompt for environments that require it
+        #[arg(short, long)]
+        yes: bool,
         /// Command to execute
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
     },
     /// List all available environments

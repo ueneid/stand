@@ -72,6 +72,17 @@ DEBUG = "false"
 - **Command Execution**: Execute commands with specific environment variables
 - **Configuration Validation**: Validate configuration file syntax and structure
 
+## Examples
+
+Learn by example! Check out the [examples/](examples/) directory for practical demonstrations:
+
+- **[basic/](examples/basic/)** - Simple environment setup (dev, prod)
+- **[inheritance/](examples/inheritance/)** - Using `extends` for environment inheritance
+- **[web-app/](examples/web-app/)** - Realistic web application configuration
+- **[interpolation/](examples/interpolation/)** - Variable interpolation with `${VAR}` syntax
+
+Each example includes a complete `.stand.toml` configuration and usage instructions. See the [Examples README](examples/README.md) for detailed walkthroughs.
+
 ## Documentation
 
 ### User Documentation
@@ -119,7 +130,7 @@ cargo fmt && cargo clippy -- -D warnings && cargo test
 - ✅ `current` - Show current environment status
 - 🚧 `init` - Initialize new configuration (planned)
 - 🚧 `shell` - Start shell with environment loaded (planned)
-- 🚧 `exec` - Execute command with environment (planned)
+- ✅ `exec` - Execute command with environment variables
 - ✅ `show` - Show environment variables with source attribution
 - 🚧 `switch` - Switch default environment (planned)
 - 🚧 `set`/`unset` - Modify environment variables (planned)
