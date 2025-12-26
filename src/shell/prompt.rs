@@ -30,16 +30,18 @@ pub fn get_prompt_env_vars(shell_type: &ShellType, env_name: &str) -> HashMap<St
     match shell_type {
         ShellType::Bash => {
             // For bash, PROMPT_COMMAND runs before each prompt display.
-            // We capture the original PS1 on first run, then prepend our prefix.
-            // Uses $STAND_ENVIRONMENT instead of embedding env_name to avoid shell injection.
+            // We capture the original PS1 on first run, then prepend our prefix with color.
+            // Uses $STAND_ENVIRONMENT and $STAND_ENV_COLOR for dynamic values.
+            // Color codes: bold=1, reverse=7, green=32, reset=0
+            // Note: Using tr for uppercase conversion for compatibility with Bash 3.x (macOS default)
             vars.insert(
                 "PROMPT_COMMAND".to_string(),
-                r#"if [ -z "$STAND_ORIGINAL_PS1" ]; then export STAND_ORIGINAL_PS1="$PS1"; fi; PS1="(stand:$STAND_ENVIRONMENT) $STAND_ORIGINAL_PS1""#.to_string(),
+                r#"if [ -z "$STAND_ORIGINAL_PS1" ]; then export STAND_ORIGINAL_PS1="$PS1"; fi; _c="${STAND_ENV_COLOR:-green}"; case "$_c" in red) _cc=31;; green) _cc=32;; yellow) _cc=33;; blue) _cc=34;; magenta|purple) _cc=35;; cyan) _cc=36;; *) _cc=32;; esac; _env_upper=$(echo "$STAND_ENVIRONMENT" | tr '[:lower:]' '[:upper:]'); PS1=$'\n\e[1;7;'"$_cc"'m stand:'"$_env_upper"$' \e[0m'"$STAND_ORIGINAL_PS1""#.to_string(),
             );
         }
         ShellType::Zsh => {
-            // Zsh prompt is handled by the spawner via precmd function.
-            // We just set STAND_PROMPT here for reference.
+            // Zsh: Set STAND_ZSH_PRECMD which will be evaled by the spawner's init command.
+            // This ensures our precmd runs after .zshrc has loaded.
         }
         ShellType::Fish => {
             // Fish handles prompts via fish_prompt function, not environment variables.
@@ -98,21 +100,23 @@ mod tests {
         let prompt_cmd = vars.get("PROMPT_COMMAND").unwrap();
         assert!(prompt_cmd.contains("STAND_ORIGINAL_PS1"));
         // Uses $STAND_ENVIRONMENT variable instead of embedded name for safety
-        assert!(prompt_cmd.contains("$STAND_ENVIRONMENT"));
+        assert!(prompt_cmd.contains("STAND_ENVIRONMENT"));
+        // Uses $STAND_ENV_COLOR for color customization
+        assert!(prompt_cmd.contains("STAND_ENV_COLOR"));
     }
 
     #[test]
     fn test_get_prompt_env_vars_zsh_only_sets_stand_prompt() {
         let vars = get_prompt_env_vars(&ShellType::Zsh, "staging");
-        // Zsh prompt is handled by spawner via precmd function
-        // Only STAND_PROMPT is set here
+        // STAND_PROMPT is set for all shells
         assert_eq!(
             vars.get(STAND_PROMPT),
             Some(&"(stand:staging) ".to_string())
         );
-        // PROMPT/PS1 are not set - handled by spawner
+        // Zsh prompt customization is handled via ZDOTDIR in spawner,
+        // so only STAND_PROMPT is set here
+        assert!(!vars.contains_key("RPS1"));
         assert!(!vars.contains_key("PROMPT"));
-        assert!(!vars.contains_key("PS1"));
     }
 
     #[test]

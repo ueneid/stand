@@ -2,7 +2,7 @@
 //
 // Handles spawning interactive shell sessions with environment variables.
 
-use crate::shell::detector::{get_shell_type, ShellType};
+use crate::shell::detector::ShellType;
 use crate::shell::prompt::get_prompt_env_vars;
 use anyhow::Result;
 use std::collections::HashMap;
@@ -26,6 +26,7 @@ pub fn build_shell_environment(
     user_env: HashMap<String, String>,
     env_name: &str,
     project_root: &str,
+    shell_path: &str,
 ) -> HashMap<String, String> {
     let mut env = user_env;
 
@@ -34,8 +35,8 @@ pub fn build_shell_environment(
     env.insert(STAND_ENVIRONMENT.to_string(), env_name.to_string());
     env.insert(STAND_PROJECT_ROOT.to_string(), project_root.to_string());
 
-    // Add prompt customization variables
-    let shell_type = get_shell_type();
+    // Add prompt customization variables based on the actual shell being spawned
+    let shell_type = ShellType::from_path(shell_path);
     let prompt_vars = get_prompt_env_vars(&shell_type, env_name);
     for (key, value) in prompt_vars {
         env.insert(key, value);
@@ -66,7 +67,19 @@ pub fn spawn_shell(shell_path: &str, env_vars: HashMap<String, String>) -> Resul
         cmd.env(key, value);
     }
 
+    // For zsh, set up ZDOTDIR with custom .zshrc
+    let zdotdir_cleanup = if matches!(shell_type, ShellType::Zsh) {
+        setup_zsh_zdotdir(&mut cmd, &env_vars)?
+    } else {
+        None
+    };
+
     let status = cmd.status()?;
+
+    // Clean up ZDOTDIR if we created one
+    if let Some(path) = zdotdir_cleanup {
+        let _ = std::fs::remove_dir_all(path);
+    }
 
     // Return exit code, handling signal termination on Unix
     match status.code() {
@@ -81,6 +94,66 @@ pub fn spawn_shell(shell_path: &str, env_vars: HashMap<String, String>) -> Resul
             Ok(1)
         }
     }
+}
+
+/// Set up ZDOTDIR for zsh with a custom .zshrc
+///
+/// Creates a temporary directory with a .zshrc that:
+/// 1. Sources the user's original .zshrc
+/// 2. Adds our precmd function for prompt customization
+///
+/// Returns the path to the temp directory for cleanup
+fn setup_zsh_zdotdir(
+    cmd: &mut Command,
+    env_vars: &HashMap<String, String>,
+) -> Result<Option<std::path::PathBuf>> {
+    use std::io::Write;
+
+    // Create temp directory
+    let temp_dir = std::env::temp_dir().join(format!("stand-zsh-{}", std::process::id()));
+    std::fs::create_dir_all(&temp_dir)?;
+
+    // Get color from env vars, default to green
+    let color = env_vars
+        .get("STAND_ENV_COLOR")
+        .map(|s| s.as_str())
+        .unwrap_or("green");
+
+    // Write custom .zshrc
+    // This sources the user's .zshrc first, then adds our precmd
+    let zshrc_content = format!(
+        r#"# Stand temporary zshrc
+# Restore original ZDOTDIR for child shells
+export ZDOTDIR="$HOME"
+
+# Source user's original .zshrc if it exists
+[[ -f "$HOME/.zshrc" ]] && source "$HOME/.zshrc"
+
+# Stand precmd function for prompt customization
+_stand_precmd() {{
+    # Save original prompt on first run
+    if [[ -z "$STAND_ORIGINAL_PROMPT" ]]; then
+        export STAND_ORIGINAL_PROMPT="$PROMPT"
+    fi
+    # Set prompt with Stand indicator (newline, bold, reverse, colored)
+    local color="{color}"
+    local env_upper="${{(U)STAND_ENVIRONMENT}}"
+    PROMPT=$'\n%B%S%F{{'$color'}} stand:'$env_upper$' %f%s%b'"$STAND_ORIGINAL_PROMPT"
+}}
+
+# Add to precmd_functions array (runs after any existing precmd)
+precmd_functions+=(_stand_precmd)
+"#
+    );
+
+    let zshrc_path = temp_dir.join(".zshrc");
+    let mut file = std::fs::File::create(&zshrc_path)?;
+    file.write_all(zshrc_content.as_bytes())?;
+
+    // Set ZDOTDIR to our temp directory
+    cmd.env("ZDOTDIR", &temp_dir);
+
+    Ok(Some(temp_dir))
 }
 
 /// Get appropriate shell arguments for interactive mode
@@ -103,18 +176,10 @@ fn get_shell_args(shell_type: &ShellType) -> Vec<String> {
             vec!["-C".to_string(), init_cmd.to_string()]
         }
         ShellType::Zsh => {
-            // Zsh uses precmd hook to modify the prompt before each command.
-            // We save the original PROMPT and prepend our Stand indicator.
-            // Uses ANSI escape codes for color (zsh %{ %} escapes them properly).
-            let init_cmd = concat!(
-                "precmd() { ",
-                "if [[ -z \"$STAND_ORIGINAL_PROMPT\" ]]; then export STAND_ORIGINAL_PROMPT=\"$PROMPT\"; fi; ",
-                "local color=\"${STAND_ENV_COLOR:-green}\"; ",
-                "local env_upper=\"${(U)STAND_ENVIRONMENT}\"; ",
-                "PROMPT=$'\\n%B%S%F{'\"$color\"'} stand:'\"$env_upper\"$' %f%s%b'\"$STAND_ORIGINAL_PROMPT\"; ",
-                "}"
-            );
-            vec!["-i".to_string(), "-c".to_string(), init_cmd.to_string()]
+            // Zsh: Use -i for interactive mode.
+            // Prompt customization is done via RPS1 (right prompt) environment variable
+            // which is set in get_prompt_env_vars and is rarely overridden by users.
+            vec!["-i".to_string()]
         }
         _ => {
             // bash and others use -i for interactive mode
@@ -136,7 +201,7 @@ mod tests {
         );
         user_env.insert("API_KEY".to_string(), "secret123".to_string());
 
-        let result = build_shell_environment(user_env, "dev", "/home/user/project");
+        let result = build_shell_environment(user_env, "dev", "/home/user/project", "/bin/bash");
 
         assert_eq!(
             result.get("DATABASE_URL"),
@@ -148,7 +213,7 @@ mod tests {
     #[test]
     fn test_build_shell_environment_includes_stand_markers() {
         let user_env = HashMap::new();
-        let result = build_shell_environment(user_env, "production", "/var/www/app");
+        let result = build_shell_environment(user_env, "production", "/var/www/app", "/bin/bash");
 
         assert_eq!(result.get(STAND_ACTIVE), Some(&"1".to_string()));
         assert_eq!(
@@ -167,7 +232,7 @@ mod tests {
         // User tries to set STAND_ACTIVE (should be overridden)
         user_env.insert(STAND_ACTIVE.to_string(), "0".to_string());
 
-        let result = build_shell_environment(user_env, "dev", "/home/user/project");
+        let result = build_shell_environment(user_env, "dev", "/home/user/project", "/bin/bash");
 
         // Stand markers should override user-provided values
         assert_eq!(result.get(STAND_ACTIVE), Some(&"1".to_string()));
@@ -182,12 +247,8 @@ mod tests {
     #[test]
     fn test_get_shell_args_zsh() {
         let args = get_shell_args(&ShellType::Zsh);
-        assert_eq!(args.len(), 3);
-        assert_eq!(args[0], "-i");
-        assert_eq!(args[1], "-c");
-        // The init command should define precmd function
-        assert!(args[2].contains("precmd"));
-        assert!(args[2].contains("STAND_ORIGINAL_PROMPT"));
+        // Zsh uses -i for interactive mode, prompt customization via RPS1 env var
+        assert_eq!(args, vec!["-i".to_string()]);
     }
 
     #[test]

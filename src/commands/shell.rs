@@ -86,6 +86,7 @@ pub fn validate_shell_environment(
     project_path: &Path,
     env_name: &str,
     skip_confirmation: bool,
+    shell_override: Option<String>,
 ) -> Result<ValidatedShellEnv> {
     // Load configuration with inheritance applied
     let config = loader::load_config_toml_with_inheritance(project_path)?;
@@ -125,14 +126,15 @@ pub fn validate_shell_environment(
         }
     }
 
-    // Get user's shell
-    let shell_path = detect_user_shell();
+    // Get shell path (use override if provided, otherwise detect from $SHELL)
+    let shell_path = shell_override.unwrap_or_else(detect_user_shell);
 
     // Build environment with Stand markers
     let project_root = project_path
         .to_str()
         .ok_or_else(|| anyhow!("Invalid project path"))?;
-    let mut shell_env = build_shell_environment(env.variables.clone(), env_name, project_root);
+    let mut shell_env =
+        build_shell_environment(env.variables.clone(), env_name, project_root, &shell_path);
 
     // Add environment color for prompt customization
     if let Some(ref color) = env.color {
@@ -152,12 +154,15 @@ pub fn validate_shell_environment(
 /// * `project_path` - Path to the project directory containing .stand.toml
 /// * `env_name` - Name of the environment to use
 /// * `skip_confirmation` - If true, skip confirmation for environments with requires_confirmation=true
+/// * `shell_override` - If provided, use this shell instead of $SHELL
 pub fn start_shell_with_environment(
     project_path: &Path,
     env_name: &str,
     skip_confirmation: bool,
+    shell_override: Option<String>,
 ) -> Result<i32> {
-    let validated = validate_shell_environment(project_path, env_name, skip_confirmation)?;
+    let validated =
+        validate_shell_environment(project_path, env_name, skip_confirmation, shell_override)?;
 
     // Print info message
     eprintln!(
@@ -231,7 +236,7 @@ DATABASE_URL = "postgres://localhost:5432/dev"
         let config_path = dir.path().join(".stand.toml");
         fs::write(&config_path, config_content).unwrap();
 
-        let result = validate_shell_environment(dir.path(), "nonexistent", false);
+        let result = validate_shell_environment(dir.path(), "nonexistent", false, None);
 
         assert!(result.is_err());
         let error_msg = format!("{}", result.unwrap_err());
@@ -261,7 +266,7 @@ description = "Development environment"
         env::set_var("STAND_ACTIVE", "1");
         env::set_var("STAND_ENVIRONMENT", "production");
 
-        let result = validate_shell_environment(dir.path(), "dev", false);
+        let result = validate_shell_environment(dir.path(), "dev", false, None);
 
         // Clean up
         env::remove_var("STAND_ACTIVE");
@@ -297,7 +302,7 @@ TEST_VAR = "test_value"
         env::set_var("STAND_ENVIRONMENT", "production");
 
         // Use validate_shell_environment to avoid spawning shell
-        let result = validate_shell_environment(dir.path(), "dev", false);
+        let result = validate_shell_environment(dir.path(), "dev", false, None);
 
         // Clean up
         env::remove_var("STAND_ACTIVE");
@@ -337,7 +342,7 @@ DATABASE_URL = "postgres://prod:5432/prod"
         let config_path = dir.path().join(".stand.toml");
         fs::write(&config_path, config_content).unwrap();
 
-        let result = validate_shell_environment(dir.path(), "prod", false);
+        let result = validate_shell_environment(dir.path(), "prod", false, None);
 
         // Clean up
         env::remove_var("STAND_FORCE_NON_TTY");
@@ -372,7 +377,7 @@ DATABASE_URL = "postgres://prod:5432/prod"
         fs::write(&config_path, config_content).unwrap();
 
         // With skip_confirmation = true, should succeed
-        let result = validate_shell_environment(dir.path(), "prod", true);
+        let result = validate_shell_environment(dir.path(), "prod", true, None);
 
         assert!(result.is_ok());
         let validated = result.unwrap();

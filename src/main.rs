@@ -10,9 +10,18 @@ fn main() -> anyhow::Result<()> {
             println!("Init command called with force: {}", force);
             std::process::exit(1); // Temporary - will implement properly
         }
-        Commands::Shell { environment, yes } => {
+        Commands::Shell {
+            environment,
+            yes,
+            shell: shell_override,
+        } => {
             let current_dir = std::env::current_dir()?;
-            match shell::start_shell_with_environment(&current_dir, &environment, yes) {
+            match shell::start_shell_with_environment(
+                &current_dir,
+                &environment,
+                yes,
+                shell_override,
+            ) {
                 Ok(exit_code) => {
                     std::process::exit(exit_code);
                 }
