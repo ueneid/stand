@@ -120,7 +120,12 @@ pub fn validate_shell_environment(
     let project_root = project_path
         .to_str()
         .ok_or_else(|| anyhow!("Invalid project path"))?;
-    let shell_env = build_shell_environment(env.variables.clone(), env_name, project_root);
+    let mut shell_env = build_shell_environment(env.variables.clone(), env_name, project_root);
+
+    // Add environment color for prompt customization
+    if let Some(ref color) = env.color {
+        shell_env.insert("STAND_ENV_COLOR".to_string(), color.clone());
+    }
 
     Ok(ValidatedShellEnv {
         shell_path,

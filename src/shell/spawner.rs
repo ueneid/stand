@@ -87,8 +87,20 @@ pub fn spawn_shell(shell_path: &str, env_vars: HashMap<String, String>) -> Resul
 fn get_shell_args(shell_type: &ShellType) -> Vec<String> {
     match shell_type {
         ShellType::Fish => {
-            // Fish doesn't use -i the same way, it's interactive by default
-            vec![]
+            // Fish uses functions for prompts, not environment variables.
+            // We use -C to inject an init command that wraps the existing fish_prompt
+            // function to prepend our Stand indicator with color from config.
+            let init_cmd = concat!(
+                "functions -c fish_prompt _stand_original_fish_prompt 2>/dev/null; ",
+                "or function _stand_original_fish_prompt; echo '> '; end; ",
+                "function fish_prompt; ",
+                "echo; ",
+                "set -q STAND_ENV_COLOR; and set_color --bold --reverse $STAND_ENV_COLOR; or set_color --bold --reverse green; ",
+                "echo -n ' stand:'(string upper $STAND_ENVIRONMENT)' '; ",
+                "set_color normal; ",
+                "_stand_original_fish_prompt; end"
+            );
+            vec!["-C".to_string(), init_cmd.to_string()]
         }
         _ => {
             // bash, zsh, and others use -i for interactive mode
@@ -162,7 +174,11 @@ mod tests {
     #[test]
     fn test_get_shell_args_fish() {
         let args = get_shell_args(&ShellType::Fish);
-        assert!(args.is_empty());
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0], "-C");
+        // The init command should wrap fish_prompt to include STAND_PROMPT
+        assert!(args[1].contains("fish_prompt"));
+        assert!(args[1].contains("STAND_PROMPT"));
     }
 
     #[test]

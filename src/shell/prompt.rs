@@ -52,10 +52,9 @@ pub fn get_prompt_env_vars(shell_type: &ShellType, env_name: &str) -> HashMap<St
             vars.insert("PS1".to_string(), format!("{}%# ", prefix));
         }
         ShellType::Fish => {
-            // Fish handles prompts differently via fish_prompt function.
-            // We just set the STAND_PROMPT variable for users to incorporate
-            // into their fish_prompt function if desired.
-            // Fish users can add: echo -n $STAND_PROMPT to their fish_prompt.
+            // Fish handles prompts via fish_prompt function, not environment variables.
+            // We set STAND_PROMPT here, and the spawner injects an init command
+            // that wraps the existing fish_prompt to prepend STAND_PROMPT.
         }
         ShellType::Other(_) => {
             // For other shells (sh, dash, etc.), try basic PS1 modification
