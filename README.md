@@ -130,7 +130,7 @@ cargo fmt && cargo clippy -- -D warnings && cargo test
 - ✅ `current` - Show current environment status
 - 🚧 `init` - Initialize new configuration (planned)
 - 🚧 `shell` - Start shell with environment loaded (planned)
-- 🚧 `exec` - Execute command with environment (planned)
+- ✅ `exec` - Execute command with environment variables
 - ✅ `show` - Show environment variables with source attribution
 - 🚧 `switch` - Switch default environment (planned)
 - 🚧 `set`/`unset` - Modify environment variables (planned)
