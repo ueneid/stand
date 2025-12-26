@@ -113,11 +113,25 @@ fn setup_zsh_zdotdir(
     let temp_dir = std::env::temp_dir().join(format!("stand-zsh-{}", std::process::id()));
     std::fs::create_dir_all(&temp_dir)?;
 
-    // Get color from env vars, default to green
+    // Get color from env vars and validate against allowlist to prevent command injection
     let color = env_vars
         .get("STAND_ENV_COLOR")
         .map(|s| s.as_str())
         .unwrap_or("green");
+    let safe_color = match color {
+        "red" | "green" | "yellow" | "blue" | "magenta" | "purple" | "cyan" | "white" | "black" => color,
+        _ => "green", // Default to green for invalid/unknown colors
+    };
+
+    // Write .zshenv to source user's original .zshenv
+    // This ensures environment setup from .zshenv is not skipped
+    let zshenv_content = r#"# Stand temporary zshenv
+# Source user's original .zshenv if it exists
+[[ -f "$HOME/.zshenv" ]] && source "$HOME/.zshenv"
+"#;
+    let zshenv_path = temp_dir.join(".zshenv");
+    let mut zshenv_file = std::fs::File::create(&zshenv_path)?;
+    zshenv_file.write_all(zshenv_content.as_bytes())?;
 
     // Write custom .zshrc
     // This sources the user's .zshrc first, then adds our precmd
@@ -136,7 +150,7 @@ _stand_precmd() {{
         export STAND_ORIGINAL_PROMPT="$PROMPT"
     fi
     # Set prompt with Stand indicator (newline, bold, reverse, colored)
-    local color="{color}"
+    local color="{safe_color}"
     local env_upper="${{(U)STAND_ENVIRONMENT}}"
     PROMPT=$'\n%B%S%F{{'$color'}} stand:'$env_upper$' %f%s%b'"$STAND_ORIGINAL_PROMPT"
 }}
