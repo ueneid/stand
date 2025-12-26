@@ -102,8 +102,22 @@ fn get_shell_args(shell_type: &ShellType) -> Vec<String> {
             );
             vec!["-C".to_string(), init_cmd.to_string()]
         }
+        ShellType::Zsh => {
+            // Zsh uses precmd hook to modify the prompt before each command.
+            // We save the original PROMPT and prepend our Stand indicator.
+            // Uses ANSI escape codes for color (zsh %{ %} escapes them properly).
+            let init_cmd = concat!(
+                "precmd() { ",
+                "if [[ -z \"$STAND_ORIGINAL_PROMPT\" ]]; then export STAND_ORIGINAL_PROMPT=\"$PROMPT\"; fi; ",
+                "local color=\"${STAND_ENV_COLOR:-green}\"; ",
+                "local env_upper=\"${(U)STAND_ENVIRONMENT}\"; ",
+                "PROMPT=$'\\n%B%S%F{'\"$color\"'} stand:'\"$env_upper\"$' %f%s%b'\"$STAND_ORIGINAL_PROMPT\"; ",
+                "}"
+            );
+            vec!["-i".to_string(), "-c".to_string(), init_cmd.to_string()]
+        }
         _ => {
-            // bash, zsh, and others use -i for interactive mode
+            // bash and others use -i for interactive mode
             vec!["-i".to_string()]
         }
     }
@@ -168,7 +182,12 @@ mod tests {
     #[test]
     fn test_get_shell_args_zsh() {
         let args = get_shell_args(&ShellType::Zsh);
-        assert_eq!(args, vec!["-i".to_string()]);
+        assert_eq!(args.len(), 3);
+        assert_eq!(args[0], "-i");
+        assert_eq!(args[1], "-c");
+        // The init command should define precmd function
+        assert!(args[2].contains("precmd"));
+        assert!(args[2].contains("STAND_ORIGINAL_PROMPT"));
     }
 
     #[test]
@@ -176,9 +195,9 @@ mod tests {
         let args = get_shell_args(&ShellType::Fish);
         assert_eq!(args.len(), 2);
         assert_eq!(args[0], "-C");
-        // The init command should wrap fish_prompt to include STAND_PROMPT
+        // The init command should wrap fish_prompt and use STAND_ENVIRONMENT
         assert!(args[1].contains("fish_prompt"));
-        assert!(args[1].contains("STAND_PROMPT"));
+        assert!(args[1].contains("STAND_ENVIRONMENT"));
     }
 
     #[test]

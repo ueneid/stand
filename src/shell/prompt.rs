@@ -31,25 +31,15 @@ pub fn get_prompt_env_vars(shell_type: &ShellType, env_name: &str) -> HashMap<St
         ShellType::Bash => {
             // For bash, PROMPT_COMMAND runs before each prompt display.
             // We capture the original PS1 on first run, then prepend our prefix.
-            // The command uses shell parameter expansion to avoid recursion.
+            // Uses $STAND_ENVIRONMENT instead of embedding env_name to avoid shell injection.
             vars.insert(
                 "PROMPT_COMMAND".to_string(),
-                format!(
-                    r#"if [ -z "$STAND_ORIGINAL_PS1" ]; then export STAND_ORIGINAL_PS1="$PS1"; fi; PS1="{prefix}$STAND_ORIGINAL_PS1""#,
-                    prefix = prefix
-                ),
+                r#"if [ -z "$STAND_ORIGINAL_PS1" ]; then export STAND_ORIGINAL_PS1="$PS1"; fi; PS1="(stand:$STAND_ENVIRONMENT) $STAND_ORIGINAL_PS1""#.to_string(),
             );
         }
         ShellType::Zsh => {
-            // For zsh, we use the precmd hook via precmd_functions array.
-            // This is sourced when the shell starts via ZDOTDIR or evaluated.
-            // We set up a function that modifies PROMPT (zsh's PS1 equivalent).
-            //
-            // Note: zsh doesn't use PROMPT_COMMAND. Instead, we use a precmd function.
-            // The simplest reliable approach is to directly set PROMPT with the prefix.
-            vars.insert("PROMPT".to_string(), format!("{}%# ", prefix));
-            // Also set PS1 for compatibility
-            vars.insert("PS1".to_string(), format!("{}%# ", prefix));
+            // Zsh prompt is handled by the spawner via precmd function.
+            // We just set STAND_PROMPT here for reference.
         }
         ShellType::Fish => {
             // Fish handles prompts via fish_prompt function, not environment variables.
@@ -107,18 +97,22 @@ mod tests {
         // Should capture original PS1 before modifying
         let prompt_cmd = vars.get("PROMPT_COMMAND").unwrap();
         assert!(prompt_cmd.contains("STAND_ORIGINAL_PS1"));
-        assert!(prompt_cmd.contains("(stand:dev)"));
+        // Uses $STAND_ENVIRONMENT variable instead of embedded name for safety
+        assert!(prompt_cmd.contains("$STAND_ENVIRONMENT"));
     }
 
     #[test]
-    fn test_get_prompt_env_vars_zsh_sets_prompt() {
+    fn test_get_prompt_env_vars_zsh_only_sets_stand_prompt() {
         let vars = get_prompt_env_vars(&ShellType::Zsh, "staging");
-        // zsh uses PROMPT, not PROMPT_COMMAND
-        assert!(vars.contains_key("PROMPT"));
-        assert!(vars.contains_key("PS1"));
-        assert!(!vars.contains_key("PROMPT_COMMAND"));
-        let prompt = vars.get("PROMPT").unwrap();
-        assert!(prompt.contains("(stand:staging)"));
+        // Zsh prompt is handled by spawner via precmd function
+        // Only STAND_PROMPT is set here
+        assert_eq!(
+            vars.get(STAND_PROMPT),
+            Some(&"(stand:staging) ".to_string())
+        );
+        // PROMPT/PS1 are not set - handled by spawner
+        assert!(!vars.contains_key("PROMPT"));
+        assert!(!vars.contains_key("PS1"));
     }
 
     #[test]

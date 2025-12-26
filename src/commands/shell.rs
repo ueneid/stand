@@ -12,6 +12,18 @@ use anyhow::{anyhow, Result};
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 
+/// Check if stdin is an interactive terminal
+///
+/// Returns false if:
+/// - stdin is not a TTY
+/// - STAND_FORCE_NON_TTY environment variable is set (for testing)
+fn is_interactive_terminal() -> bool {
+    if std::env::var("STAND_FORCE_NON_TTY").is_ok() {
+        return false;
+    }
+    io::stdin().is_terminal()
+}
+
 /// Prompt user for confirmation before executing in a protected environment
 fn prompt_confirmation(env_name: &str) -> Result<bool> {
     print!(
@@ -98,7 +110,7 @@ pub fn validate_shell_environment(
     // Check if confirmation is required
     if env.requires_confirmation.unwrap_or(false) && !skip_confirmation {
         // Check if stdin is a terminal - fail fast in non-interactive environments
-        if !io::stdin().is_terminal() {
+        if !is_interactive_terminal() {
             return Err(anyhow!(
                 "Environment '{}' requires confirmation but stdin is not a terminal.\n\
                  Use -y or --yes to skip confirmation in non-interactive environments.",
@@ -306,6 +318,9 @@ TEST_VAR = "test_value"
         env::remove_var("STAND_ACTIVE");
         env::remove_var("STAND_ENVIRONMENT");
 
+        // Force non-TTY behavior for reliable testing
+        env::set_var("STAND_FORCE_NON_TTY", "1");
+
         let dir = tempdir().unwrap();
         let config_content = r#"
 version = "2.0"
@@ -322,8 +337,10 @@ DATABASE_URL = "postgres://prod:5432/prod"
         let config_path = dir.path().join(".stand.toml");
         fs::write(&config_path, config_content).unwrap();
 
-        // In test environment, stdin is not a TTY
         let result = validate_shell_environment(dir.path(), "prod", false);
+
+        // Clean up
+        env::remove_var("STAND_FORCE_NON_TTY");
 
         assert!(result.is_err());
         let error_msg = format!("{}", result.unwrap_err());

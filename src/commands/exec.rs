@@ -6,6 +6,18 @@ use anyhow::{anyhow, Result};
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 
+/// Check if stdin is an interactive terminal
+///
+/// Returns false if:
+/// - stdin is not a TTY
+/// - STAND_FORCE_NON_TTY environment variable is set (for testing)
+fn is_interactive_terminal() -> bool {
+    if std::env::var("STAND_FORCE_NON_TTY").is_ok() {
+        return false;
+    }
+    io::stdin().is_terminal()
+}
+
 /// Prompt user for confirmation before executing in a protected environment
 ///
 /// Returns true if the user confirms, false otherwise
@@ -53,7 +65,7 @@ pub fn execute_with_environment(
     // Check if confirmation is required
     if env.requires_confirmation.unwrap_or(false) && !skip_confirmation {
         // Check if stdin is a terminal - fail fast in non-interactive environments
-        if !io::stdin().is_terminal() {
+        if !is_interactive_terminal() {
             return Err(anyhow!(
                 "Environment '{}' requires confirmation but stdin is not a terminal.\n\
                  Use -y or --yes to skip confirmation in non-interactive environments.",
