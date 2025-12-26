@@ -299,9 +299,9 @@ DATABASE_URL = "postgres://prod:5432/prod"
 
     assert!(result.is_err());
     let error_msg = format!("{}", result.unwrap_err());
-    // When stdin is empty (test environment), the prompt returns false
-    // and the function returns "Execution cancelled" error
-    assert!(error_msg.contains("Execution cancelled"));
+    // In non-TTY environments (like tests), we fail fast with a clear error
+    assert!(error_msg.contains("requires confirmation"));
+    assert!(error_msg.contains("not a terminal"));
     assert!(error_msg.contains("-y") || error_msg.contains("--yes"));
 }
 

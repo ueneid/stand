@@ -3,7 +3,7 @@
 use crate::config::loader;
 use crate::process::executor::CommandExecutor;
 use anyhow::{anyhow, Result};
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 
 /// Prompt user for confirmation before executing in a protected environment
@@ -52,6 +52,14 @@ pub fn execute_with_environment(
 
     // Check if confirmation is required
     if env.requires_confirmation.unwrap_or(false) && !skip_confirmation {
+        // Check if stdin is a terminal - fail fast in non-interactive environments
+        if !io::stdin().is_terminal() {
+            return Err(anyhow!(
+                "Environment '{}' requires confirmation but stdin is not a terminal.\n\
+                 Use -y or --yes to skip confirmation in non-interactive environments.",
+                env_name
+            ));
+        }
         // Prompt user for confirmation
         if !prompt_confirmation(env_name)? {
             return Err(anyhow!(
