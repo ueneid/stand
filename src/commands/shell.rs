@@ -50,17 +50,31 @@ fn check_nesting_allowed(behavior: Option<NestedBehavior>, current_env: &str) ->
     }
 }
 
-/// Start an interactive shell with the specified environment
+/// Result of validating shell environment before spawning
+#[derive(Debug)]
+pub struct ValidatedShellEnv {
+    /// Path to the shell executable
+    pub shell_path: String,
+    /// Environment variables to inject
+    pub env_vars: std::collections::HashMap<String, String>,
+    /// Name of the environment
+    pub env_name: String,
+}
+
+/// Validate and prepare shell environment without spawning
 ///
-/// # Arguments
-/// * `project_path` - Path to the project directory containing .stand.toml
-/// * `env_name` - Name of the environment to use
-/// * `skip_confirmation` - If true, skip confirmation for environments with requires_confirmation=true
-pub fn start_shell_with_environment(
+/// This function performs all pre-spawn validation:
+/// - Loads and validates configuration
+/// - Checks for nesting
+/// - Validates environment exists
+/// - Handles confirmation prompts
+///
+/// Returns the validated environment ready for spawning, or an error.
+pub fn validate_shell_environment(
     project_path: &Path,
     env_name: &str,
     skip_confirmation: bool,
-) -> Result<i32> {
+) -> Result<ValidatedShellEnv> {
     // Load configuration with inheritance applied
     let config = loader::load_config_toml_with_inheritance(project_path)?;
 
@@ -108,14 +122,34 @@ pub fn start_shell_with_environment(
         .ok_or_else(|| anyhow!("Invalid project path"))?;
     let shell_env = build_shell_environment(env.variables.clone(), env_name, project_root);
 
+    Ok(ValidatedShellEnv {
+        shell_path,
+        env_vars: shell_env,
+        env_name: env_name.to_string(),
+    })
+}
+
+/// Start an interactive shell with the specified environment
+///
+/// # Arguments
+/// * `project_path` - Path to the project directory containing .stand.toml
+/// * `env_name` - Name of the environment to use
+/// * `skip_confirmation` - If true, skip confirmation for environments with requires_confirmation=true
+pub fn start_shell_with_environment(
+    project_path: &Path,
+    env_name: &str,
+    skip_confirmation: bool,
+) -> Result<i32> {
+    let validated = validate_shell_environment(project_path, env_name, skip_confirmation)?;
+
     // Print info message
     eprintln!(
         "Starting shell with environment '{}'. Type 'exit' to return.",
-        env_name
+        validated.env_name
     );
 
     // Spawn the shell
-    spawn_shell(&shell_path, shell_env)
+    spawn_shell(&validated.shell_path, validated.env_vars)
 }
 
 #[cfg(test)]
@@ -155,6 +189,9 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // Tests below use validate_shell_environment to avoid spawning actual shells
+    // which could hang in CI or non-interactive environments.
+
     #[test]
     #[serial]
     fn test_shell_nonexistent_environment() {
@@ -177,7 +214,7 @@ DATABASE_URL = "postgres://localhost:5432/dev"
         let config_path = dir.path().join(".stand.toml");
         fs::write(&config_path, config_content).unwrap();
 
-        let result = start_shell_with_environment(dir.path(), "nonexistent", false);
+        let result = validate_shell_environment(dir.path(), "nonexistent", false);
 
         assert!(result.is_err());
         let error_msg = format!("{}", result.unwrap_err());
@@ -207,7 +244,7 @@ description = "Development environment"
         env::set_var("STAND_ACTIVE", "1");
         env::set_var("STAND_ENVIRONMENT", "production");
 
-        let result = start_shell_with_environment(dir.path(), "dev", false);
+        let result = validate_shell_environment(dir.path(), "dev", false);
 
         // Clean up
         env::remove_var("STAND_ACTIVE");
@@ -232,6 +269,7 @@ nested_shell_behavior = "allow"
 
 [environments.dev]
 description = "Development environment"
+TEST_VAR = "test_value"
 "#;
 
         let config_path = dir.path().join(".stand.toml");
@@ -241,18 +279,19 @@ description = "Development environment"
         env::set_var("STAND_ACTIVE", "1");
         env::set_var("STAND_ENVIRONMENT", "production");
 
-        // This should not error due to nesting (but will fail on shell spawn in test env)
-        let result = start_shell_with_environment(dir.path(), "dev", false);
+        // Use validate_shell_environment to avoid spawning shell
+        let result = validate_shell_environment(dir.path(), "dev", false);
 
         // Clean up
         env::remove_var("STAND_ACTIVE");
         env::remove_var("STAND_ENVIRONMENT");
 
-        // The result might be an error due to shell spawn, but not due to nesting
-        if result.is_err() {
-            let error_msg = format!("{}", result.unwrap_err());
-            assert!(!error_msg.contains("Already inside a Stand shell"));
-        }
+        // Should succeed - nesting is allowed
+        assert!(result.is_ok());
+        let validated = result.unwrap();
+        assert_eq!(validated.env_name, "dev");
+        assert!(validated.env_vars.contains_key("TEST_VAR"));
+        assert!(validated.env_vars.contains_key("STAND_ACTIVE"));
     }
 
     #[test]
@@ -279,11 +318,42 @@ DATABASE_URL = "postgres://prod:5432/prod"
         fs::write(&config_path, config_content).unwrap();
 
         // In test environment, stdin is not a TTY
-        let result = start_shell_with_environment(dir.path(), "prod", false);
+        let result = validate_shell_environment(dir.path(), "prod", false);
 
         assert!(result.is_err());
         let error_msg = format!("{}", result.unwrap_err());
         assert!(error_msg.contains("requires confirmation"));
         assert!(error_msg.contains("not a terminal"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_shell_skips_confirmation_with_yes_flag() {
+        // Ensure we're not in a Stand shell
+        env::remove_var("STAND_ACTIVE");
+        env::remove_var("STAND_ENVIRONMENT");
+
+        let dir = tempdir().unwrap();
+        let config_content = r#"
+version = "2.0"
+
+[settings]
+default_environment = "prod"
+
+[environments.prod]
+description = "Production environment"
+requires_confirmation = true
+DATABASE_URL = "postgres://prod:5432/prod"
+"#;
+
+        let config_path = dir.path().join(".stand.toml");
+        fs::write(&config_path, config_content).unwrap();
+
+        // With skip_confirmation = true, should succeed
+        let result = validate_shell_environment(dir.path(), "prod", true);
+
+        assert!(result.is_ok());
+        let validated = result.unwrap();
+        assert_eq!(validated.env_name, "prod");
     }
 }

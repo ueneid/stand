@@ -18,7 +18,8 @@ pub fn generate_prompt_prefix(env_name: &str) -> String {
 
 /// Get environment variables needed for prompt customization
 ///
-/// Returns a HashMap of environment variables to set based on shell type
+/// Returns a HashMap of environment variables to set based on shell type.
+/// Each shell type has a different mechanism for modifying the prompt.
 pub fn get_prompt_env_vars(shell_type: &ShellType, env_name: &str) -> HashMap<String, String> {
     let mut vars = HashMap::new();
     let prefix = generate_prompt_prefix(env_name);
@@ -28,34 +29,37 @@ pub fn get_prompt_env_vars(shell_type: &ShellType, env_name: &str) -> HashMap<St
 
     match shell_type {
         ShellType::Bash => {
-            // For bash, we set PROMPT_COMMAND to prepend to PS1
-            // This approach works without modifying the user's existing PS1
+            // For bash, PROMPT_COMMAND runs before each prompt display.
+            // We capture the original PS1 on first run, then prepend our prefix.
+            // The command uses shell parameter expansion to avoid recursion.
             vars.insert(
                 "PROMPT_COMMAND".to_string(),
                 format!(
-                    r#"PS1="{}${{STAND_ORIGINAL_PS1:-$PS1}}"; unset PROMPT_COMMAND"#,
-                    prefix
+                    r#"if [ -z "$STAND_ORIGINAL_PS1" ]; then export STAND_ORIGINAL_PS1="$PS1"; fi; PS1="{prefix}$STAND_ORIGINAL_PS1""#,
+                    prefix = prefix
                 ),
             );
-            // Save original PS1 so we can restore it
-            vars.insert("STAND_ORIGINAL_PS1".to_string(), "${PS1}".to_string());
         }
         ShellType::Zsh => {
-            // For zsh, we can use precmd hook or just modify PS1
-            // Using a simpler approach that works with most zsh configs
-            vars.insert(
-                "PROMPT_COMMAND".to_string(),
-                format!(r#"PS1="{}${{STAND_ORIGINAL_PS1:-$PS1}}""#, prefix),
-            );
-            vars.insert("STAND_ORIGINAL_PS1".to_string(), "${PS1}".to_string());
+            // For zsh, we use the precmd hook via precmd_functions array.
+            // This is sourced when the shell starts via ZDOTDIR or evaluated.
+            // We set up a function that modifies PROMPT (zsh's PS1 equivalent).
+            //
+            // Note: zsh doesn't use PROMPT_COMMAND. Instead, we use a precmd function.
+            // The simplest reliable approach is to directly set PROMPT with the prefix.
+            vars.insert("PROMPT".to_string(), format!("{}%# ", prefix));
+            // Also set PS1 for compatibility
+            vars.insert("PS1".to_string(), format!("{}%# ", prefix));
         }
         ShellType::Fish => {
-            // Fish handles prompts differently via functions
+            // Fish handles prompts differently via fish_prompt function.
             // We just set the STAND_PROMPT variable for users to incorporate
-            // into their fish_prompt function if desired
+            // into their fish_prompt function if desired.
+            // Fish users can add: echo -n $STAND_PROMPT to their fish_prompt.
         }
         ShellType::Other(_) => {
-            // For other shells, just set STAND_PROMPT and hope for the best
+            // For other shells (sh, dash, etc.), try basic PS1 modification
+            vars.insert("PS1".to_string(), format!("{}$ ", prefix));
         }
     }
 
@@ -65,7 +69,6 @@ pub fn get_prompt_env_vars(shell_type: &ShellType, env_name: &str) -> HashMap<St
 /// Generate a colored prompt prefix with ANSI escape codes
 ///
 /// Uses green color for the environment name
-#[allow(dead_code)]
 pub fn generate_colored_prompt_prefix(env_name: &str, color: Option<&str>) -> String {
     let color_code = match color {
         Some("red") => "\x1b[31m",
@@ -102,21 +105,38 @@ mod tests {
     fn test_get_prompt_env_vars_bash_sets_prompt_command() {
         let vars = get_prompt_env_vars(&ShellType::Bash, "dev");
         assert!(vars.contains_key("PROMPT_COMMAND"));
-        assert!(vars.contains_key("STAND_ORIGINAL_PS1"));
+        // Should capture original PS1 before modifying
+        let prompt_cmd = vars.get("PROMPT_COMMAND").unwrap();
+        assert!(prompt_cmd.contains("STAND_ORIGINAL_PS1"));
+        assert!(prompt_cmd.contains("(stand:dev)"));
     }
 
     #[test]
-    fn test_get_prompt_env_vars_zsh_sets_prompt_command() {
+    fn test_get_prompt_env_vars_zsh_sets_prompt() {
         let vars = get_prompt_env_vars(&ShellType::Zsh, "staging");
-        assert!(vars.contains_key("PROMPT_COMMAND"));
+        // zsh uses PROMPT, not PROMPT_COMMAND
+        assert!(vars.contains_key("PROMPT"));
+        assert!(vars.contains_key("PS1"));
+        assert!(!vars.contains_key("PROMPT_COMMAND"));
+        let prompt = vars.get("PROMPT").unwrap();
+        assert!(prompt.contains("(stand:staging)"));
     }
 
     #[test]
     fn test_get_prompt_env_vars_fish_only_sets_stand_prompt() {
         let vars = get_prompt_env_vars(&ShellType::Fish, "prod");
         assert_eq!(vars.get(STAND_PROMPT), Some(&"(stand:prod) ".to_string()));
-        // Fish doesn't use PROMPT_COMMAND
+        // Fish doesn't use PROMPT_COMMAND or PS1
         assert!(!vars.contains_key("PROMPT_COMMAND"));
+        assert!(!vars.contains_key("PS1"));
+    }
+
+    #[test]
+    fn test_get_prompt_env_vars_other_sets_ps1() {
+        let vars = get_prompt_env_vars(&ShellType::Other("sh".to_string()), "dev");
+        assert!(vars.contains_key("PS1"));
+        let ps1 = vars.get("PS1").unwrap();
+        assert!(ps1.contains("(stand:dev)"));
     }
 
     #[test]
