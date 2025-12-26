@@ -152,7 +152,7 @@ _stand_precmd() {{
     # Set prompt with Stand indicator (newline, bold, reverse, colored)
     local color="{safe_color}"
     local env_upper="${{(U)STAND_ENVIRONMENT}}"
-    PROMPT=$'\n%B%S%F{{'$color'}} stand:'$env_upper$' %f%s%b'"$STAND_ORIGINAL_PROMPT"
+    PROMPT=$'\n%B%S%F{{'"$color"'}} stand:'"$env_upper"$' %f%s%b'"$STAND_ORIGINAL_PROMPT"
 }}
 
 # Add to precmd_functions array (runs after any existing precmd)
