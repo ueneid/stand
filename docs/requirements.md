@@ -96,6 +96,7 @@ Current solutions either require verbose command prefixes for every execution or
 - **FR-1.5**: Configuration SHALL support common variables shared across all environments
 - **FR-1.6**: Users SHALL be able to list all available environments
 - **FR-1.7**: Users SHALL be able to view environment variables with or without values
+- **FR-1.8**: Users SHALL be able to view active environment variables in the current subshell
 
 ### 5.2 Environment Activation
 
