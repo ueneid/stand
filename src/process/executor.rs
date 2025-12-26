@@ -4,6 +4,9 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::process::Command;
 
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
+
 /// Executes commands with environment variables
 pub struct CommandExecutor {
     command: String,
@@ -28,6 +31,16 @@ impl CommandExecutor {
     }
 
     /// Execute the command and return the exit code
+    ///
+    /// # Returns
+    /// - `Ok(i32)` - The exit code of the executed command
+    ///   - If the process terminates normally, returns its exit code
+    ///   - If the process is terminated by a signal (Unix only), returns 128 + signal number
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The command cannot be found or executed
+    /// - I/O errors occur during execution
     pub fn execute(self) -> Result<i32> {
         let mut cmd = Command::new(&self.command);
         cmd.args(&self.args);
@@ -38,7 +51,23 @@ impl CommandExecutor {
         }
 
         let status = cmd.status()?;
-        Ok(status.code().unwrap_or(1))
+
+        // Return exit code, handling signal termination on Unix
+        match status.code() {
+            Some(code) => Ok(code),
+            None => {
+                // Process was terminated by a signal (Unix only)
+                #[cfg(unix)]
+                {
+                    if let Some(signal) = status.signal() {
+                        // POSIX convention: 128 + signal number
+                        return Ok(128 + signal);
+                    }
+                }
+                // Fallback for non-Unix or unknown termination
+                Ok(1)
+            }
+        }
     }
 }
 
@@ -119,5 +148,32 @@ mod tests {
 
         let exit_code = executor.execute().unwrap();
         assert_eq!(exit_code, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_execute_signal_termination_returns_128_plus_signal() {
+        // Test that signal termination returns 128 + signal number (POSIX convention)
+        // SIGKILL = 9, so expected exit code is 128 + 9 = 137
+        let executor = CommandExecutor::new(
+            "sh".to_string(),
+            vec!["-c".to_string(), "kill -9 $$".to_string()],
+        );
+        let exit_code = executor.execute().unwrap();
+
+        assert_eq!(exit_code, 137); // 128 + SIGKILL(9)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_execute_sigterm_returns_128_plus_15() {
+        // Test SIGTERM (15) returns 128 + 15 = 143
+        let executor = CommandExecutor::new(
+            "sh".to_string(),
+            vec!["-c".to_string(), "kill -15 $$".to_string()],
+        );
+        let exit_code = executor.execute().unwrap();
+
+        assert_eq!(exit_code, 143); // 128 + SIGTERM(15)
     }
 }

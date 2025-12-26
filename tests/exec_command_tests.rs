@@ -299,7 +299,9 @@ DATABASE_URL = "postgres://prod:5432/prod"
 
     assert!(result.is_err());
     let error_msg = format!("{}", result.unwrap_err());
-    assert!(error_msg.contains("requires confirmation"));
+    // When stdin is empty (test environment), the prompt returns false
+    // and the function returns "Execution cancelled" error
+    assert!(error_msg.contains("Execution cancelled"));
     assert!(error_msg.contains("-y") || error_msg.contains("--yes"));
 }
 

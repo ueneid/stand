@@ -3,7 +3,25 @@
 use crate::config::loader;
 use crate::process::executor::CommandExecutor;
 use anyhow::{anyhow, Result};
+use std::io::{self, Write};
 use std::path::Path;
+
+/// Prompt user for confirmation before executing in a protected environment
+///
+/// Returns true if the user confirms, false otherwise
+fn prompt_confirmation(env_name: &str) -> Result<bool> {
+    print!(
+        "Environment '{}' requires confirmation.\nAre you sure you want to proceed? [y/N]: ",
+        env_name
+    );
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+
+    let response = input.trim().to_lowercase();
+    Ok(response == "y" || response == "yes")
+}
 
 /// Execute a command with the specified environment
 ///
@@ -34,10 +52,12 @@ pub fn execute_with_environment(
 
     // Check if confirmation is required
     if env.requires_confirmation.unwrap_or(false) && !skip_confirmation {
-        return Err(anyhow!(
-            "Environment '{}' requires confirmation. Use -y or --yes to proceed.",
-            env_name
-        ));
+        // Prompt user for confirmation
+        if !prompt_confirmation(env_name)? {
+            return Err(anyhow!(
+                "Execution cancelled. Use -y or --yes to skip confirmation."
+            ));
+        }
     }
 
     // Validate command is not empty
