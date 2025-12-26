@@ -21,6 +21,12 @@ pub enum Commands {
     Shell {
         /// Environment name to activate
         environment: String,
+        /// Skip confirmation prompt for environments that require it
+        #[arg(short, long)]
+        yes: bool,
+        /// Shell to use (defaults to $SHELL)
+        #[arg(long)]
+        shell: Option<String>,
     },
     /// Execute a command with the specified environment
     Exec {

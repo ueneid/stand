@@ -1,6 +1,6 @@
 use clap::Parser;
 use stand::cli::commands::{Cli, Commands};
-use stand::commands::{current, exec, list, show, validate};
+use stand::commands::{current, exec, list, shell, show, validate};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -10,9 +10,26 @@ fn main() -> anyhow::Result<()> {
             println!("Init command called with force: {}", force);
             std::process::exit(1); // Temporary - will implement properly
         }
-        Commands::Shell { environment } => {
-            println!("Shell command called with environment: {}", environment);
-            std::process::exit(1); // Temporary - will implement properly
+        Commands::Shell {
+            environment,
+            yes,
+            shell: shell_override,
+        } => {
+            let current_dir = std::env::current_dir()?;
+            match shell::start_shell_with_environment(
+                &current_dir,
+                &environment,
+                yes,
+                shell_override,
+            ) {
+                Ok(exit_code) => {
+                    std::process::exit(exit_code);
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
         Commands::Exec {
             environment,
