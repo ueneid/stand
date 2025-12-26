@@ -16,10 +16,11 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Exec {
             environment,
+            yes,
             command,
         } => {
             let current_dir = std::env::current_dir()?;
-            match exec::execute_with_environment(&current_dir, &environment, command) {
+            match exec::execute_with_environment(&current_dir, &environment, command, yes) {
                 Ok(exit_code) => {
                     std::process::exit(exit_code);
                 }
