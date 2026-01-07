@@ -70,4 +70,16 @@ pub enum Commands {
     Validate,
     /// Show the current active environment
     Current,
+    /// Show environment variables in the current Stand subshell
+    Env {
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
+        /// Show only Stand marker variables (STAND_*)
+        #[arg(long, conflicts_with = "user_only")]
+        stand_only: bool,
+        /// Show only user-defined variables
+        #[arg(long, conflicts_with = "stand_only")]
+        user_only: bool,
+    },
 }

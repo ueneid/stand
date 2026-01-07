@@ -1,6 +1,6 @@
 use clap::Parser;
 use stand::cli::commands::{Cli, Commands};
-use stand::commands::{current, exec, list, shell, show, validate};
+use stand::commands::{current, env, exec, list, shell, show, validate};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -94,6 +94,27 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Current => {
             current::handle_current()?;
+        }
+        Commands::Env {
+            json,
+            stand_only,
+            user_only,
+        } => {
+            let current_dir = std::env::current_dir()?;
+            let options = env::EnvOptions {
+                json,
+                stand_only,
+                user_only,
+            };
+            match env::show_env(&current_dir, options) {
+                Ok(output) => {
+                    print!("{}", output);
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
     }
 
