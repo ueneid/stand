@@ -100,10 +100,14 @@ Options:
 Start a new shell session with the specified environment loaded.
 
 ```bash
-stand shell <ENVIRONMENT>
+stand shell <ENVIRONMENT> [OPTIONS]
 
 Arguments:
   <ENVIRONMENT>  Environment name to load
+
+Options:
+  -y, --yes      Skip confirmation for protected environments
+  --shell <SHELL>  Override shell executable
 ```
 
 **Behavior:**
@@ -111,8 +115,9 @@ Arguments:
 - Starts a new shell session with variables set
 - Shows environment indicator in prompt (if configured)
 - Environment variables persist only within the shell session
+- Detects and prevents nested shells by default (configurable via `nested_shell_behavior`)
 
-**Implementation Status:** 🚧 Planned
+**Implementation Status:** ✅ Implemented
 
 ---
 
@@ -120,11 +125,14 @@ Arguments:
 Execute a command with the specified environment loaded.
 
 ```bash
-stand exec <ENVIRONMENT> -- <COMMAND>...
+stand exec <ENVIRONMENT> [OPTIONS] -- <COMMAND>...
 
 Arguments:
   <ENVIRONMENT>  Environment name to load
   <COMMAND>...   Command and arguments to execute
+
+Options:
+  -y, --yes      Skip confirmation for protected environments
 ```
 
 **Examples:**
@@ -134,7 +142,7 @@ stand exec prod -- ./deploy.sh
 stand exec staging -- python manage.py migrate
 ```
 
-**Implementation Status:** 🚧 Planned
+**Implementation Status:** ✅ Implemented
 
 ---
 
@@ -177,6 +185,41 @@ Variables:
 
 **Security Note:**
 The `--values` flag displays actual values of environment variables. Be cautious when using this flag in shared environments or when sensitive data might be exposed.
+
+**Implementation Status:** ✅ Implemented
+
+---
+
+### `env`
+Show environment variables in the current Stand subshell.
+
+```bash
+stand env [OPTIONS]
+
+Options:
+  --json         Output in JSON format
+  --stand-only   Show only Stand marker variables (STAND_*)
+  --user-only    Show only user-defined environment variables
+```
+
+**Output Example:**
+```bash
+# stand env
+# Stand Environment
+STAND_ACTIVE=1
+STAND_ENVIRONMENT=dev
+STAND_PROJECT_ROOT=/path/to/project
+
+# User Variables
+API_KEY=dev-key
+DATABASE_URL=postgres://localhost/dev
+```
+
+**Behavior:**
+- Must be run inside a Stand subshell (started with `stand shell`)
+- Shows both Stand marker variables and user-defined variables by default
+- Use `--stand-only` or `--user-only` to filter output
+- JSON output available for scripting
 
 **Implementation Status:** ✅ Implemented
 
