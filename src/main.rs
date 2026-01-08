@@ -106,15 +106,8 @@ fn main() -> anyhow::Result<()> {
                 stand_only,
                 user_only,
             };
-            match env::show_env(&current_dir, options) {
-                Ok(output) => {
-                    print!("{}", output);
-                }
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
-                }
-            }
+            let output = env::show_env(&current_dir, options)?;
+            print!("{}", output);
         }
     }
 

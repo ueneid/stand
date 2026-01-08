@@ -5,15 +5,27 @@ use std::collections::HashMap;
 use std::env;
 use std::path::Path;
 
-/// Options for the env command output
+/// Options for controlling `stand env` command output format and filtering.
+///
+/// # Field Interactions
+/// - `stand_only` and `user_only` are mutually exclusive (enforced by CLI)
+/// - When both are `false`, both Stand markers and user variables are displayed
 #[derive(Debug, Clone, Default)]
 pub struct EnvOptions {
+    /// Output in JSON format instead of plain text
     pub json: bool,
+    /// Show only Stand marker variables (STAND_*)
     pub stand_only: bool,
+    /// Show only user-defined environment variables
     pub user_only: bool,
 }
 
-/// Stand marker environment variable names
+/// Stand marker environment variable names used to identify and configure
+/// Stand subshell sessions.
+///
+/// Note: These variables are set by the `shell` command when spawning a subshell.
+/// If new marker variables are added to the shell spawning logic, they should
+/// also be added here to be displayed by `stand env`.
 const STAND_MARKER_VARS: &[&str] = &[
     "STAND_ACTIVE",
     "STAND_ENVIRONMENT",
@@ -119,7 +131,25 @@ fn format_json(
     Ok(serde_json::to_string_pretty(&output)?)
 }
 
-/// Show environment variables in the current Stand subshell
+/// Display environment variables for the current Stand subshell session.
+///
+/// This function retrieves and formats both Stand marker variables (STAND_*)
+/// and user-defined variables from the configuration for display.
+///
+/// # Arguments
+///
+/// * `project_path` - Path to the project root containing `.stand.toml`
+/// * `options` - Output formatting and filtering options
+///
+/// # Returns
+///
+/// Formatted string containing environment variables (plain text or JSON)
+///
+/// # Errors
+///
+/// - Returns an error if not currently inside a Stand subshell
+/// - Returns an error if STAND_ENVIRONMENT is not set (should not happen in valid session)
+/// - JSON serialization errors are propagated when using JSON output format
 pub fn show_env(project_path: &Path, options: EnvOptions) -> Result<String> {
     // Check if we're inside a Stand subshell
     if !is_stand_shell_active() {
@@ -141,7 +171,13 @@ pub fn show_env(project_path: &Path, options: EnvOptions) -> Result<String> {
     let user_vars = if options.stand_only {
         HashMap::new()
     } else {
-        get_user_variables(project_path, &env_name).unwrap_or_else(|_| HashMap::new())
+        match get_user_variables(project_path, &env_name) {
+            Ok(vars) => vars,
+            Err(e) => {
+                eprintln!("Warning: Could not load user-defined variables: {}", e);
+                HashMap::new()
+            }
+        }
     };
 
     // Format output
@@ -195,6 +231,23 @@ mod tests {
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(error_msg.contains("Not inside a Stand subshell"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_show_env_stand_active_but_no_environment() {
+        // STAND_ACTIVE is set but STAND_ENVIRONMENT is not - abnormal state
+        env::set_var("STAND_ACTIVE", "1");
+        env::remove_var("STAND_ENVIRONMENT");
+
+        let dir = tempdir().unwrap();
+        let result = show_env(dir.path(), EnvOptions::default());
+
+        env::remove_var("STAND_ACTIVE");
+
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("STAND_ENVIRONMENT is not set"));
     }
 
     #[test]

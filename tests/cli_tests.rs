@@ -183,3 +183,25 @@ description = "Development environment"
             "Environment 'nonexistent' not found",
         ));
 }
+
+#[test]
+fn test_cli_env_command_not_in_subshell() {
+    // When run outside of a Stand subshell (no STAND_ACTIVE), should fail
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.env_remove("STAND_ACTIVE")
+        .env_remove("STAND_ENVIRONMENT")
+        .arg("env")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not inside a Stand subshell"));
+}
+
+#[test]
+fn test_cli_env_command_options_conflict() {
+    // --stand-only and --user-only should conflict
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.args(&["env", "--stand-only", "--user-only"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
