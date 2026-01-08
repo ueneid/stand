@@ -1,10 +1,19 @@
 // init.rs - Initialize Stand configuration
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::fs;
 use std::path::Path;
 
 /// Handle the init command to create .stand.toml
+///
+/// # Arguments
+/// * `current_dir` - The directory where .stand.toml will be created
+/// * `force` - If true, overwrites existing .stand.toml; if false, returns error when file exists
+///
+/// # Errors
+/// Returns error if:
+/// - .stand.toml already exists and force is false
+/// - Failed to write the configuration file
 pub fn handle_init(current_dir: &Path, force: bool) -> Result<()> {
     let config_path = current_dir.join(".stand.toml");
 
@@ -19,7 +28,8 @@ pub fn handle_init(current_dir: &Path, force: bool) -> Result<()> {
 
     // Generate and write template
     let template = generate_default_template();
-    fs::write(&config_path, template)?;
+    fs::write(&config_path, &template)
+        .with_context(|| format!("Failed to write .stand.toml to {}", config_path.display()))?;
 
     if existed {
         println!("✓ Overwritten existing .stand.toml");
@@ -36,6 +46,13 @@ pub fn handle_init(current_dir: &Path, force: bool) -> Result<()> {
 }
 
 /// Generate the default .stand.toml template
+///
+/// Creates a template with:
+/// - Version 2.0 configuration format
+/// - Default environment set to "dev"
+/// - Commented `[common]` section for shared variables
+/// - Pre-configured "dev" environment (green color)
+/// - Pre-configured "prod" environment (red color, requires confirmation)
 fn generate_default_template() -> String {
     r#"version = "2.0"
 
@@ -72,6 +89,17 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn test_generate_default_template_is_valid_toml() {
+        let template = generate_default_template();
+        let parsed: Result<toml::Value, _> = toml::from_str(&template);
+        assert!(
+            parsed.is_ok(),
+            "Generated template should be valid TOML: {:?}",
+            parsed.err()
+        );
+    }
 
     #[test]
     fn test_generate_default_template_contains_version() {
