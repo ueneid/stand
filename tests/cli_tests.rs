@@ -24,22 +24,82 @@ fn test_cli_shows_version() {
 }
 
 #[test]
-fn test_cli_parses_init_command() {
+fn test_cli_init_creates_config() {
+    let dir = tempdir().unwrap();
+
     let mut cmd = Command::cargo_bin("stand").unwrap();
-    // This test should fail initially since we haven't implemented the command handling
-    cmd.arg("init").assert().failure(); // Expecting failure for now
+    cmd.current_dir(dir.path())
+        .arg("init")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Created .stand.toml"));
+
+    // Verify the file was created
+    let config_path = dir.path().join(".stand.toml");
+    assert!(config_path.exists());
+
+    let content = fs::read_to_string(&config_path).unwrap();
+    assert!(content.contains(r#"version = "2.0""#));
+    assert!(content.contains("[environments.dev]"));
+    assert!(content.contains("[environments.prod]"));
 }
 
 #[test]
-fn test_cli_parses_shell_command() {
+fn test_cli_init_fails_when_exists() {
+    let dir = tempdir().unwrap();
+
+    // Create existing config
+    fs::write(dir.path().join(".stand.toml"), "existing").unwrap();
+
     let mut cmd = Command::cargo_bin("stand").unwrap();
-    cmd.args(&["shell", "dev"]).assert().failure(); // Expecting failure for now
+    cmd.current_dir(dir.path())
+        .arg("init")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already initialized"));
 }
 
 #[test]
-fn test_cli_parses_list_command() {
+fn test_cli_init_force_overwrites() {
+    let dir = tempdir().unwrap();
+
+    // Create existing config
+    fs::write(dir.path().join(".stand.toml"), "old content").unwrap();
+
     let mut cmd = Command::cargo_bin("stand").unwrap();
-    cmd.arg("list").assert().failure(); // Should fail without .stand.toml file
+    cmd.current_dir(dir.path())
+        .args(&["init", "--force"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Overwritten existing .stand.toml"));
+
+    let content = fs::read_to_string(dir.path().join(".stand.toml")).unwrap();
+    assert!(content.contains(r#"version = "2.0""#));
+    assert!(!content.contains("old content"));
+}
+
+#[test]
+fn test_cli_shell_command_no_config() {
+    let dir = tempdir().unwrap();
+
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path())
+        .args(&["shell", "dev"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Error:")); // Should fail without .stand.toml file
+}
+
+#[test]
+fn test_cli_list_command_no_config_basic() {
+    let dir = tempdir().unwrap();
+
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path())
+        .arg("list")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Error:")); // Should fail without .stand.toml file
 }
 
 #[test]

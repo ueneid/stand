@@ -88,11 +88,12 @@ Options:
 ```
 
 **Behavior:**
-- Creates a basic `.stand.toml` with dev/staging/prod environments
+- Creates a basic `.stand.toml` with dev/prod environments
+- Includes commented `[common]` section with usage examples
 - Fails if file already exists (unless `--force` is used)
-- Prompts for basic configuration options
+- Non-interactive (no prompts)
 
-**Implementation Status:** 🚧 Planned
+**Implementation Status:** ✅ Implemented
 
 ---
 

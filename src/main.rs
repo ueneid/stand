@@ -1,14 +1,14 @@
 use clap::Parser;
 use stand::cli::commands::{Cli, Commands};
-use stand::commands::{current, env, exec, list, shell, show, validate};
+use stand::commands::{current, env, exec, init, list, shell, show, validate};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
         Commands::Init { force } => {
-            println!("Init command called with force: {}", force);
-            std::process::exit(1); // Temporary - will implement properly
+            let current_dir = std::env::current_dir()?;
+            init::handle_init(&current_dir, force)?;
         }
         Commands::Shell {
             environment,
