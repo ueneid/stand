@@ -100,14 +100,14 @@ Options:
 Start a new shell session with the specified environment loaded.
 
 ```bash
-stand shell <ENVIRONMENT> [OPTIONS]
+stand shell [OPTIONS] <ENVIRONMENT>
 
 Arguments:
-  <ENVIRONMENT>  Environment name to load
+  <ENVIRONMENT>  Environment name to activate
 
 Options:
-  -y, --yes      Skip confirmation for protected environments
-  --shell <SHELL>  Override shell executable
+  -y, --yes            Skip confirmation prompt for environments that require it
+      --shell <SHELL>  Shell to use (defaults to $SHELL)
 ```
 
 **Behavior:**
@@ -125,14 +125,14 @@ Options:
 Execute a command with the specified environment loaded.
 
 ```bash
-stand exec <ENVIRONMENT> [OPTIONS] -- <COMMAND>...
+stand exec [OPTIONS] <ENVIRONMENT> [COMMAND]...
 
 Arguments:
-  <ENVIRONMENT>  Environment name to load
-  <COMMAND>...   Command and arguments to execute
+  <ENVIRONMENT>  Environment name to use
+  [COMMAND]...   Command to execute
 
 Options:
-  -y, --yes      Skip confirmation for protected environments
+  -y, --yes      Skip confirmation prompt for environments that require it
 ```
 
 **Examples:**
@@ -197,9 +197,9 @@ Show environment variables in the current Stand subshell.
 stand env [OPTIONS]
 
 Options:
-  --json         Output in JSON format
-  --stand-only   Show only Stand marker variables (STAND_*)
-  --user-only    Show only user-defined environment variables
+      --json        Output in JSON format
+      --stand-only  Show only Stand marker variables (STAND_*)
+      --user-only   Show only user-defined variables
 ```
 
 **Output Example:**
