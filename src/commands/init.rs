@@ -31,6 +31,9 @@ pub fn handle_init(current_dir: &Path, force: bool) -> Result<()> {
     fs::write(&config_path, &template)
         .with_context(|| format!("Failed to write .stand.toml to {}", config_path.display()))?;
 
+    // Set secure permissions (0600) on Unix systems
+    set_secure_permissions(&config_path)?;
+
     if existed {
         println!("✓ Overwritten existing .stand.toml");
     } else {
@@ -41,6 +44,26 @@ pub fn handle_init(current_dir: &Path, force: bool) -> Result<()> {
     println!("  1. Edit .stand.toml to add your environment variables");
     println!("  2. Run 'stand list' to see available environments");
     println!("  3. Run 'stand shell <env>' to start a shell with that environment");
+
+    Ok(())
+}
+
+/// Set secure file permissions (0600) for configuration files
+fn set_secure_permissions(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(path)?.permissions();
+        perms.set_mode(0o600); // Owner read/write only
+        fs::set_permissions(path, perms)
+            .with_context(|| format!("Failed to set permissions for {}", path.display()))?;
+    }
+
+    #[cfg(windows)]
+    {
+        // On Windows, files are typically secure by default within user directories
+        let _ = path; // Silence unused variable warning
+    }
 
     Ok(())
 }
@@ -193,5 +216,25 @@ mod tests {
         let content = fs::read_to_string(dir.path().join(".stand.toml")).unwrap();
         assert!(content.contains(r#"version = "2.0""#));
         assert!(!content.contains("old content"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_init_sets_secure_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempdir().unwrap();
+
+        handle_init(dir.path(), false).unwrap();
+
+        let config_path = dir.path().join(".stand.toml");
+        let metadata = fs::metadata(&config_path).unwrap();
+        let permissions = metadata.permissions();
+
+        // Verify file has 0600 permissions (owner read/write only)
+        assert_eq!(
+            permissions.mode() & 0o777,
+            0o600,
+            "Config file should have 0600 permissions"
+        );
     }
 }
