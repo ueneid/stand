@@ -132,6 +132,7 @@ cargo fmt && cargo clippy -- -D warnings && cargo test
 - ✅ `shell` - Start interactive shell with environment loaded
 - ✅ `exec` - Execute command with environment variables
 - ✅ `show` - Show environment variables with source attribution
+- ✅ `env` - Show active environment variables in current subshell
 - 🚧 `switch` - Switch default environment (planned)
 - 🚧 `set`/`unset` - Modify environment variables (planned)
 
