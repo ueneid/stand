@@ -128,7 +128,7 @@ cargo fmt && cargo clippy -- -D warnings && cargo test
 - ✅ `list` - List all available environments
 - ✅ `validate` - Validate configuration file
 - ✅ `current` - Show current environment status
-- 🚧 `init` - Initialize new configuration (planned)
+- ✅ `init` - Initialize new configuration
 - ✅ `shell` - Start interactive shell with environment loaded
 - ✅ `exec` - Execute command with environment variables
 - ✅ `show` - Show environment variables with source attribution
