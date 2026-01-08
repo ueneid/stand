@@ -119,7 +119,9 @@ fn setup_zsh_zdotdir(
         .map(|s| s.as_str())
         .unwrap_or("green");
     let safe_color = match color {
-        "red" | "green" | "yellow" | "blue" | "magenta" | "purple" | "cyan" | "white" | "black" => color,
+        "red" | "green" | "yellow" | "blue" | "magenta" | "purple" | "cyan" | "white" | "black" => {
+            color
+        }
         _ => "green", // Default to green for invalid/unknown colors
     };
 

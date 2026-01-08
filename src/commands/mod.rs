@@ -1,4 +1,5 @@
 pub mod current;
+pub mod env;
 pub mod exec;
 pub mod init;
 pub mod list;
