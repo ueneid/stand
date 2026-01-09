@@ -261,8 +261,6 @@ mod tests {
         let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development"
@@ -294,8 +292,6 @@ API_KEY = "dev-key"
         let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development"
@@ -328,8 +324,6 @@ DATABASE_URL = "postgres://localhost/dev"
         let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development"
@@ -362,8 +356,6 @@ DATABASE_URL = "postgres://localhost/dev"
         let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development"

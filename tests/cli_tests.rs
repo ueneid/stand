@@ -108,9 +108,6 @@ fn test_cli_list_command_with_config() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
-
 [environments.dev]
 description = "Development environment"
 color = "green"
@@ -130,14 +127,13 @@ requires_confirmation = true
         .assert()
         .success()
         .stdout(predicate::str::contains("Available environments:"))
-        .stdout(predicate::str::contains("→ dev"))
+        .stdout(predicate::str::contains("dev"))
         .stdout(predicate::str::contains("Development environment"))
         .stdout(predicate::str::contains("prod"))
         .stdout(predicate::str::contains("Production environment"))
         .stdout(predicate::str::contains("[green]"))
         .stdout(predicate::str::contains("[red]"))
-        .stdout(predicate::str::contains("確認要"))
-        .stdout(predicate::str::contains("→ indicates default environment"));
+        .stdout(predicate::str::contains("確認要"));
 }
 
 #[test]
@@ -159,8 +155,6 @@ fn test_cli_show_command_with_config() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [common]
 APP_NAME = "MyApp"
@@ -193,8 +187,6 @@ fn test_cli_show_command_with_values() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [common]
 APP_NAME = "MyApp"
@@ -224,8 +216,6 @@ fn test_cli_show_command_nonexistent_env() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development environment"

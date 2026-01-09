@@ -17,13 +17,6 @@ pub fn validate_required_fields(config: &Configuration) -> Result<(), ConfigErro
         });
     }
 
-    // Check that default_environment is not empty
-    if config.settings.default_environment.is_empty() {
-        return Err(ConfigError::MissingField {
-            field: "settings.default_environment".to_string(),
-        });
-    }
-
     // Check that each environment has a non-empty description
     for (env_name, env) in &config.environments {
         if env.description.is_empty() {
@@ -42,13 +35,6 @@ pub fn validate_required_fields(config: &Configuration) -> Result<(), ConfigErro
 /// Validate that all environment references are valid
 pub fn validate_environment_references(config: &Configuration) -> Result<(), ConfigError> {
     let env_names: HashSet<&String> = config.environments.keys().collect();
-
-    // Check that default_environment exists
-    if !env_names.contains(&config.settings.default_environment) {
-        return Err(ConfigError::InvalidEnvironment {
-            name: config.settings.default_environment.clone(),
-        });
-    }
 
     // Check that all 'extends' references are valid
     for env in config.environments.values() {

@@ -74,10 +74,6 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Commands::Switch { environment } => {
-            println!("Switch command called with environment: {}", environment);
-            std::process::exit(1); // Temporary - will implement properly
-        }
         Commands::Set { name, value } => {
             println!(
                 "Set command called with name: {} and value: {}",

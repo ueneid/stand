@@ -26,11 +26,9 @@ stand list
 **Output Example:**
 ```
 Available environments:
-  → dev     Development environment [green]
-    staging Staging environment [yellow]
-    prod    Production environment [red] 確認要
-
-→ indicates default environment
+  dev     Development environment [green]
+  staging Staging environment [yellow]
+  prod    Production environment [red] 確認要
 ```
 
 **Implementation Status:** ✅ Implemented
@@ -51,7 +49,7 @@ stand validate
 
 ```
 ✗ Configuration validation failed:
-  - Missing required field: default_environment
+  - Missing required field: version
   - Invalid environment reference in 'prod.extends': 'nonexistent'
 ```
 
@@ -223,25 +221,6 @@ DATABASE_URL=postgres://localhost/dev
 - JSON output available for scripting
 
 **Implementation Status:** ✅ Implemented
-
----
-
-### `switch`
-Change the default environment in the configuration.
-
-```bash
-stand switch <ENVIRONMENT>
-
-Arguments:
-  <ENVIRONMENT>  Environment name to set as default
-```
-
-**Behavior:**
-- Updates `settings.default_environment` in `.stand.toml`
-- Shows confirmation if target environment requires it
-- Validates that the environment exists
-
-**Implementation Status:** 🚧 Planned
 
 ---
 

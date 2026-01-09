@@ -8,9 +8,6 @@ fn test_list_displays_multiple_environments() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
-
 [environments.dev]
 description = "Development environment"
 color = "green"
@@ -44,42 +41,10 @@ DATABASE_URL = "postgres://prod.example.com/app"
 }
 
 #[test]
-fn test_list_marks_default_environment() {
-    let dir = tempdir().unwrap();
-    let config_content = r#"
-version = "2.0"
-
-[settings]
-default_environment = "prod"
-
-[environments.dev]
-description = "Development environment"
-
-[environments.prod]
-description = "Production environment"
-"#;
-
-    let config_path = dir.path().join(".stand.toml");
-    fs::write(&config_path, config_content).unwrap();
-
-    let result = list::list_environments(dir.path());
-    assert!(result.is_ok());
-
-    let output = result.unwrap();
-    // デフォルト環境には印が付く
-    assert!(output.contains("→ prod") || output.contains("* prod"));
-    // 非デフォルト環境には印が付かない
-    assert!(!output.contains("→ dev") && !output.contains("* dev"));
-}
-
-#[test]
 fn test_list_shows_colors() {
     let dir = tempdir().unwrap();
     let config_content = r#"
 version = "2.0"
-
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development environment"
@@ -106,9 +71,6 @@ fn test_list_handles_no_environments() {
     let dir = tempdir().unwrap();
     let config_content = r#"
 version = "2.0"
-
-[settings]
-default_environment = "dev"
 
 [environments]
 "#;
@@ -146,9 +108,6 @@ fn test_list_shows_requires_confirmation() {
     let dir = tempdir().unwrap();
     let config_content = r#"
 version = "2.0"
-
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development environment"

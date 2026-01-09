@@ -8,8 +8,6 @@ fn test_color_inheritance_from_parent() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.base]
 description = "Base environment"
@@ -49,8 +47,6 @@ fn test_color_override_in_child() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "prod"
 
 [environments.base]
 description = "Base environment"
@@ -93,8 +89,6 @@ fn test_requires_confirmation_inheritance() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.base]
 description = "Base environment"
@@ -135,8 +129,6 @@ fn test_extends_nonexistent_parent_validation() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development environment"
@@ -160,8 +152,6 @@ fn test_multilevel_property_inheritance() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.global]
 description = "Global base"

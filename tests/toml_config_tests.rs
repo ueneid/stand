@@ -11,7 +11,6 @@ mod tests {
 version = "2.0"
 
 [settings]
-default_environment = "dev"
 show_env_in_prompt = true
 
 [common]
@@ -41,7 +40,6 @@ DEBUG = "false"
 
         // Verify basic structure
         assert_eq!(config.version, "2.0");
-        assert_eq!(config.settings.default_environment, "dev");
         assert_eq!(config.settings.show_env_in_prompt, Some(true));
 
         // Verify common variables
@@ -88,7 +86,6 @@ DEBUG = "false"
         let mut config = Configuration {
             version: "2.0".to_string(),
             settings: Settings {
-                default_environment: "dev".to_string(),
                 nested_shell_behavior: Some(NestedBehavior::Prevent),
                 show_env_in_prompt: Some(true),
             },
@@ -119,14 +116,35 @@ DEBUG = "false"
         let parsed: Configuration =
             toml::from_str(&toml_output).expect("Failed to parse serialized TOML");
         assert_eq!(parsed.version, config.version);
-        assert_eq!(
-            parsed.settings.default_environment,
-            config.settings.default_environment
-        );
     }
 
     #[test]
     fn test_minimal_configuration() {
+        let toml_content = r#"
+version = "2.0"
+
+[environments.dev]
+description = "Development environment"
+"#;
+
+        let config: Configuration =
+            toml::from_str(toml_content).expect("Failed to parse minimal TOML");
+
+        assert_eq!(config.version, "2.0");
+        assert!(config.common.is_none());
+
+        let dev_env = config
+            .environments
+            .get("dev")
+            .expect("Dev environment should exist");
+        assert_eq!(dev_env.description, "Development environment");
+        assert!(dev_env.extends.is_none());
+        assert!(dev_env.variables.is_empty());
+    }
+
+    #[test]
+    fn test_backward_compatibility_with_default_environment() {
+        // Old config files with default_environment should still be parseable
         let toml_content = r#"
 version = "2.0"
 
@@ -137,19 +155,10 @@ default_environment = "dev"
 description = "Development environment"
 "#;
 
-        let config: Configuration =
-            toml::from_str(toml_content).expect("Failed to parse minimal TOML");
+        let config: Configuration = toml::from_str(toml_content)
+            .expect("Failed to parse TOML with legacy default_environment");
 
         assert_eq!(config.version, "2.0");
-        assert_eq!(config.settings.default_environment, "dev");
-        assert!(config.common.is_none());
-
-        let dev_env = config
-            .environments
-            .get("dev")
-            .expect("Dev environment should exist");
-        assert_eq!(dev_env.description, "Development environment");
-        assert!(dev_env.extends.is_none());
-        assert!(dev_env.variables.is_empty());
+        // default_environment is ignored but file should parse without error
     }
 }

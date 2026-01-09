@@ -89,7 +89,6 @@ Environment
 └── requires_confirmation: bool
 
 Settings
-├── default_environment: String
 ├── nested_shell_behavior: NestedBehavior
 └── show_env_in_prompt: bool
 ```
@@ -172,7 +171,6 @@ The `.stand.toml` file uses TOML format and contains:
 version = "2.0"
 
 [settings]
-default_environment = "dev"
 show_env_in_prompt = true
 nested_shell_behavior = "prevent"
 
@@ -225,9 +223,6 @@ New single-file structure:
 ```toml
 version = "2.0"
 
-[settings]
-default_environment = "dev"
-
 # Variables shared across all environments
 [common]
 APP_NAME = "MyApplication"
@@ -277,7 +272,6 @@ Commands map to distinct handlers:
 - `exec` → Execute command
 - `list` → Display environments
 - `show` → Display variables
-- `switch` → Change default
 - `set/unset` → Modify variables
 - `validate` → Check configuration
 - `current` → Show active environment
