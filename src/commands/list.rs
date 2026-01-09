@@ -7,7 +7,7 @@ pub fn list_environments(project_path: &Path) -> Result<String> {
     let config = loader::load_config_toml(project_path)?;
 
     if config.environments.is_empty() {
-        return Err(anyhow!("環境が定義されていません"));
+        return Err(anyhow!("No environments defined"));
     }
 
     // Sort environments alphabetically
@@ -34,7 +34,7 @@ fn format_environment_line(name: &str, env: &crate::config::types::Environment) 
         .unwrap_or_default();
 
     let confirmation_part = if env.requires_confirmation.unwrap_or(false) {
-        " 確認要"
+        " (requires confirmation)"
     } else {
         ""
     };

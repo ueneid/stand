@@ -29,11 +29,11 @@ DEBUG = "true"
     let config = result.unwrap();
     let dev_env = &config.environments["dev"];
 
-    // 子環境が親から色を継承している
+    // Child environment inherits color from parent
     assert_eq!(dev_env.color, Some("blue".to_string()));
-    // 説明は上書きされている
+    // Description is overridden
     assert_eq!(dev_env.description, "Development environment");
-    // 変数も継承されている
+    // Variables are also inherited
     assert_eq!(
         dev_env.variables["DATABASE_URL"],
         "postgres://base.example.com/app"
@@ -74,11 +74,11 @@ color = "red"
     let staging_env = &config.environments["staging"];
     let prod_env = &config.environments["prod"];
 
-    // staging環境は色を上書き、確認要求は継承
+    // staging env overrides color, inherits requires_confirmation
     assert_eq!(staging_env.color, Some("yellow".to_string()));
     assert_eq!(staging_env.requires_confirmation, Some(true));
 
-    // prod環境も色を上書き、確認要求は継承
+    // prod env also overrides color, inherits requires_confirmation
     assert_eq!(prod_env.color, Some("red".to_string()));
     assert_eq!(prod_env.requires_confirmation, Some(true));
 }
@@ -98,7 +98,7 @@ DATABASE_URL = "postgres://base.example.com/app"
 [environments.dev]
 description = "Development environment"
 extends = "base"
-# requires_confirmationは未設定（継承される）
+# requires_confirmation is not set (inherited)
 
 [environments.unsafe]
 description = "Unsafe environment"
@@ -116,10 +116,10 @@ requires_confirmation = false
     let dev_env = &config.environments["dev"];
     let unsafe_env = &config.environments["unsafe"];
 
-    // dev環境は確認要求を継承
+    // dev env inherits requires_confirmation
     assert_eq!(dev_env.requires_confirmation, Some(true));
 
-    // unsafe環境は確認要求を明示的にfalseに上書き
+    // unsafe env explicitly overrides requires_confirmation to false
     assert_eq!(unsafe_env.requires_confirmation, Some(false));
 }
 
@@ -162,12 +162,12 @@ requires_confirmation = true
 description = "Base environment"
 extends = "global"
 color = "blue"
-# requires_confirmationは未設定（globalから継承）
+# requires_confirmation is not set (inherited from global)
 
 [environments.dev]
 description = "Development environment"
 extends = "base"
-# colorとrequires_confirmationは両方継承
+# Both color and requires_confirmation are inherited
 "#;
 
     let config_path = dir.path().join(".stand.toml");
@@ -179,7 +179,7 @@ extends = "base"
     let config = result.unwrap();
     let dev_env = &config.environments["dev"];
 
-    // 多段階継承：colorはbaseから、requires_confirmationはglobalから
+    // Multi-level inheritance: color from base, requires_confirmation from global
     assert_eq!(dev_env.color, Some("blue".to_string()));
     assert_eq!(dev_env.requires_confirmation, Some(true));
     assert_eq!(dev_env.description, "Development environment");

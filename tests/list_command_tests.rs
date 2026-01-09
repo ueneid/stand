@@ -82,15 +82,13 @@ version = "2.0"
     assert!(result.is_err());
 
     let error_msg = format!("{}", result.unwrap_err());
-    assert!(
-        error_msg.contains("環境が定義されていません") || error_msg.contains("No environments")
-    );
+    assert!(error_msg.contains("No environments defined"));
 }
 
 #[test]
 fn test_list_handles_missing_config() {
     let dir = tempdir().unwrap();
-    // 設定ファイルを作成しない
+    // Do not create config file
 
     let result = list::list_environments(dir.path());
     assert!(result.is_err());
@@ -124,6 +122,6 @@ requires_confirmation = true
     assert!(result.is_ok());
 
     let output = result.unwrap();
-    // 確認が必要な環境は特別な表示
-    assert!(output.contains("確認要") || output.contains("confirmation"));
+    // Environments requiring confirmation have special display
+    assert!(output.contains("(requires confirmation)"));
 }
