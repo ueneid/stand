@@ -30,13 +30,19 @@ auto_exit_on_dir_change = true    # Auto-exit shell when leaving project directo
 ```
 
 #### auto_exit_on_dir_change
-Controls whether the Stand subshell automatically exits when you navigate to a directory outside the project root (the directory containing `.stand.toml`). This helps maintain clear boundaries between project environments.
+Controls whether the Stand subshell prevents navigation to directories outside the project root (the directory containing `.stand.toml`). This helps maintain clear boundaries between project environments.
 
 **Default: `true` (enabled)**
 
+When enabled and you attempt to navigate outside the project directory:
+- The navigation is blocked and you stay in your current directory
+- A warning message is displayed explaining why
+- You can type `exit` to leave the Stand shell and navigate freely
+
+Behavior:
 - Child directories within the project are allowed
-- Exiting to parent or sibling directories triggers auto-exit
-- Works with bash, zsh, and fish shells
+- Navigating to parent or sibling directories is blocked
+- Works with bash, zsh, and fish shells (any directory-changing command)
 - Set to `false` to disable this behavior
 
 ### Common Variables Section

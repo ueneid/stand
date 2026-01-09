@@ -145,17 +145,24 @@ export ZDOTDIR="$HOME"
 # Source user's original .zshrc if it exists
 [[ -f "$HOME/.zshrc" ]] && source "$HOME/.zshrc"
 
-# Stand chpwd function for auto-exit when leaving project directory
+# Track previous directory for reverting
+typeset -g _stand_prev_dir="$PWD"
+
+# Stand chpwd function for directory guard when leaving project directory
 # Only active when STAND_AUTO_EXIT=1
 _stand_chpwd() {{
     if [[ "$STAND_AUTO_EXIT" = "1" ]] && [[ -n "$STAND_PROJECT_ROOT" ]]; then
         local current_real="$(cd "$PWD" 2>/dev/null && pwd -P)"
         local root_real="$(cd "$STAND_PROJECT_ROOT" 2>/dev/null && pwd -P)"
         case "$current_real" in
-            "$root_real"|"$root_real"/*) ;;
+            "$root_real"|"$root_real"/*)
+                _stand_prev_dir="$PWD"
+                ;;
             *)
-                echo "Left project directory. Exiting Stand shell..."
-                exit 0
+                # Revert to previous directory
+                builtin cd "$_stand_prev_dir"
+                echo "⚠️  Cannot leave project directory while in Stand shell."
+                echo "    Type 'exit' to leave the Stand shell first."
                 ;;
         esac
     fi
@@ -198,17 +205,28 @@ fn get_shell_args(shell_type: &ShellType) -> Vec<String> {
             // Fish uses functions for prompts, not environment variables.
             // We use -C to inject an init command that wraps the existing fish_prompt
             // function to prepend our Stand indicator with color from config.
-            // Also adds a PWD variable watcher for auto-exit when leaving project directory.
+            // Also adds a PWD variable watcher for directory guard when leaving project directory.
+            // NOTE: We use `realpath` instead of `cd && pwd -P` to avoid triggering
+            // another PWD change which would cause infinite recursion.
+            // The _stand_reverting flag prevents recursion when we revert the directory.
             let init_cmd = concat!(
-                // Auto-exit function when leaving project directory
+                // Initialize state variables
+                "set -g _stand_prev_dir $PWD; ",
+                "set -g _stand_reverting 0; ",
+                // Directory guard function when leaving project directory
                 "function _stand_check_dir --on-variable PWD; ",
+                "if test \"$_stand_reverting\" = \"1\"; set -g _stand_reverting 0; return; end; ",
                 "if test \"$STAND_AUTO_EXIT\" = \"1\" -a -n \"$STAND_PROJECT_ROOT\"; ",
-                "set -l current_real (cd $PWD 2>/dev/null; and pwd -P); ",
-                "set -l root_real (cd $STAND_PROJECT_ROOT 2>/dev/null; and pwd -P); ",
+                "set -l current_real (realpath \"$PWD\" 2>/dev/null; or echo \"$PWD\"); ",
+                "set -l root_real (realpath \"$STAND_PROJECT_ROOT\" 2>/dev/null; or echo \"$STAND_PROJECT_ROOT\"); ",
                 "if not string match -q \"$root_real\" \"$current_real\"; ",
                 "and not string match -q \"$root_real/*\" \"$current_real\"; ",
-                "echo 'Left project directory. Exiting Stand shell...'; exit 0; ",
-                "end; end; end; ",
+                "set -g _stand_reverting 1; ",
+                "builtin cd $_stand_prev_dir; ",
+                "echo '⚠️  Cannot leave project directory while in Stand shell.'; ",
+                "echo '    Type exit to leave the Stand shell first.'; ",
+                "return; end; end; ",
+                "set -g _stand_prev_dir $PWD; end; ",
                 // Prompt customization
                 "functions -c fish_prompt _stand_original_fish_prompt 2>/dev/null; ",
                 "or function _stand_original_fish_prompt; echo '> '; end; ",
