@@ -225,8 +225,6 @@ mod tests {
         let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development environment"
@@ -251,8 +249,6 @@ DATABASE_URL = "postgres://localhost:5432/dev"
         let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 nested_shell_behavior = "prevent"
 
 [environments.dev]
@@ -286,7 +282,6 @@ description = "Development environment"
 version = "2.0"
 
 [settings]
-default_environment = "dev"
 nested_shell_behavior = "allow"
 
 [environments.dev]
@@ -330,8 +325,6 @@ TEST_VAR = "test_value"
         let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "prod"
 
 [environments.prod]
 description = "Production environment"
@@ -364,8 +357,6 @@ DATABASE_URL = "postgres://prod:5432/prod"
         let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "prod"
 
 [environments.prod]
 description = "Production environment"

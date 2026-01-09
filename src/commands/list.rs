@@ -10,8 +10,6 @@ pub fn list_environments(project_path: &Path) -> Result<String> {
         return Err(anyhow!("環境が定義されていません"));
     }
 
-    let default_env = &config.settings.default_environment;
-
     // Sort environments alphabetically
     let mut env_names: Vec<_> = config.environments.keys().collect();
     env_names.sort();
@@ -20,22 +18,15 @@ pub fn list_environments(project_path: &Path) -> Result<String> {
 
     for env_name in env_names {
         let env = &config.environments[env_name];
-        let env_line = format_environment_line(env_name, env, env_name == default_env);
+        let env_line = format_environment_line(env_name, env);
         output.push_str(&env_line);
     }
 
-    output.push_str("\n→ indicates default environment");
     Ok(output)
 }
 
 /// Formats a single environment line for display
-fn format_environment_line(
-    name: &str,
-    env: &crate::config::types::Environment,
-    is_default: bool,
-) -> String {
-    let marker = if is_default { "→" } else { " " };
-
+fn format_environment_line(name: &str, env: &crate::config::types::Environment) -> String {
     let color_part = env
         .color
         .as_ref()
@@ -49,7 +40,7 @@ fn format_environment_line(
     };
 
     format!(
-        "  {} {}     {}{}{}\n",
-        marker, name, env.description, color_part, confirmation_part
+        "  {}     {}{}{}\n",
+        name, env.description, color_part, confirmation_part
     )
 }

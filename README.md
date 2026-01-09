@@ -41,9 +41,6 @@ Create a `.stand.toml` file in your project root:
 ```toml
 version = "2.0"
 
-[settings]
-default_environment = "dev"
-
 [common]
 APP_NAME = "MyApp"
 LOG_FORMAT = "json"
@@ -133,7 +130,6 @@ cargo fmt && cargo clippy -- -D warnings && cargo test
 - ✅ `exec` - Execute command with environment variables
 - ✅ `show` - Show environment variables with source attribution
 - ✅ `env` - Show active environment variables in current subshell
-- 🚧 `switch` - Switch default environment (planned)
 - 🚧 `set`/`unset` - Modify environment variables (planned)
 
 ## Contributing

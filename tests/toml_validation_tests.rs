@@ -10,9 +10,6 @@ fn test_load_config_toml_with_validation_success() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
-
 [common]
 APP_NAME = "TestApp"
 LOG_LEVEL = "info"
@@ -37,7 +34,6 @@ DEBUG = "false"
 
     let config = result.unwrap();
     assert_eq!(config.version, "2.0");
-    assert_eq!(config.settings.default_environment, "dev");
     assert!(config.common.is_some());
 
     let dev_env = config.environments.get("dev").unwrap();
@@ -52,32 +48,8 @@ fn test_load_config_toml_with_validation_missing_required_fields() {
     let dir = TempDir::new().unwrap();
     let config_content = r#"
 # Missing version field
-[settings]
-default_environment = "dev"
-
 [environments.dev]
 # Missing description field
-DATABASE_URL = "postgres://localhost/dev"
-"#;
-
-    let config_path = dir.path().join(".stand.toml");
-    fs::write(&config_path, config_content).unwrap();
-
-    let result = loader::load_config_toml_with_validation(dir.path());
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_load_config_toml_with_validation_invalid_environment_reference() {
-    let dir = TempDir::new().unwrap();
-    let config_content = r#"
-version = "2.0"
-
-[settings]
-default_environment = "nonexistent"
-
-[environments.dev]
-description = "Development environment"
 DATABASE_URL = "postgres://localhost/dev"
 "#;
 
@@ -93,9 +65,6 @@ fn test_load_config_toml_with_validation_circular_reference() {
     let dir = TempDir::new().unwrap();
     let config_content = r#"
 version = "2.0"
-
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development environment"
@@ -119,15 +88,31 @@ fn test_load_config_toml_with_validation_empty_common_values() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
-
 [common]
 APP_NAME = ""
 VALID_KEY = "valid_value"
 
 [environments.dev]
 description = "Development environment"
+DATABASE_URL = "postgres://localhost/dev"
+"#;
+
+    let config_path = dir.path().join(".stand.toml");
+    fs::write(&config_path, config_content).unwrap();
+
+    let result = loader::load_config_toml_with_validation(dir.path());
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_load_config_toml_with_validation_invalid_extends_reference() {
+    let dir = TempDir::new().unwrap();
+    let config_content = r#"
+version = "2.0"
+
+[environments.dev]
+description = "Development environment"
+extends = "nonexistent"
 DATABASE_URL = "postgres://localhost/dev"
 "#;
 

@@ -9,8 +9,6 @@ fn test_variable_inheritance_basic() {
     let toml_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [common]
 APP_NAME = "MyApp"
@@ -65,8 +63,6 @@ fn test_circular_inheritance_detection() {
     let toml_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development environment"
@@ -95,8 +91,6 @@ fn test_inheritance_chain() {
     let toml_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [common]
 APP_NAME = "MyApp"

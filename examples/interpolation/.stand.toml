@@ -1,7 +1,5 @@
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 # This example demonstrates variable interpolation using ${VAR} syntax.
 # Stand can reference system environment variables within your configuration.

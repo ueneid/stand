@@ -218,11 +218,7 @@ mod tests {
             version: "2.0".to_string(),
             environments,
             common: Some(common),
-            settings: Settings {
-                default_environment: "dev".to_string(),
-                nested_shell_behavior: None,
-                show_env_in_prompt: None,
-            },
+            settings: Settings::default(),
         }
     }
 

@@ -89,7 +89,6 @@ Environment
 └── requires_confirmation: bool
 
 Settings
-├── default_environment: String
 ├── nested_shell_behavior: NestedBehavior
 └── show_env_in_prompt: bool
 ```
@@ -172,7 +171,6 @@ The `.stand.toml` file uses TOML format and contains:
 version = "2.0"
 
 [settings]
-default_environment = "dev"
 show_env_in_prompt = true
 nested_shell_behavior = "prevent"
 
@@ -224,9 +222,6 @@ Legacy multi-file structure:
 New single-file structure:
 ```toml
 version = "2.0"
-
-[settings]
-default_environment = "dev"
 
 # Variables shared across all environments
 [common]

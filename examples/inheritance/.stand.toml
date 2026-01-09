@@ -1,7 +1,5 @@
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 # Common variables shared across all environments
 [common]

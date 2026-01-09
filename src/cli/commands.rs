@@ -49,11 +49,6 @@ pub enum Commands {
         #[arg(short, long)]
         values: bool,
     },
-    /// Switch the default environment
-    Switch {
-        /// Environment name to set as default
-        environment: String,
-    },
     /// Set a session variable
     Set {
         /// Variable name

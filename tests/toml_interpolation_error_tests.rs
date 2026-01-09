@@ -9,8 +9,6 @@ fn test_interpolation_unterminated_placeholder() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development with ${UNTERMINATED"
@@ -33,8 +31,6 @@ fn test_interpolation_empty_variable_name() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development with ${}"
@@ -57,8 +53,6 @@ fn test_interpolation_nonexistent_variable() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development with ${NONEXISTENT_VAR}"
@@ -92,8 +86,6 @@ fn test_interpolation_multiple_variables_success() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "API ${PREFIX} ${VERSION} for ${ENDPOINT}"
@@ -131,8 +123,6 @@ fn test_interpolation_in_common_variables() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [common]
 APP_NAME = "${APP_PREFIX}_service"

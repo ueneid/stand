@@ -6,6 +6,7 @@ pub struct Configuration {
     pub version: String,
     pub environments: HashMap<String, Environment>,
     pub common: Option<HashMap<String, String>>,
+    #[serde(default)]
     pub settings: Settings,
 }
 
@@ -19,9 +20,8 @@ pub struct Environment {
     pub requires_confirmation: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct Settings {
-    pub default_environment: String,
     pub nested_shell_behavior: Option<NestedBehavior>,
     pub show_env_in_prompt: Option<bool>,
 }

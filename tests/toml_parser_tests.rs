@@ -10,7 +10,6 @@ fn test_load_toml_configuration() {
 version = "2.0"
 
 [settings]
-default_environment = "dev"
 show_env_in_prompt = true
 
 [common]
@@ -40,7 +39,6 @@ DEBUG = "false"
     match result {
         Ok(config) => {
             assert_eq!(config.version, "2.0");
-            assert_eq!(config.settings.default_environment, "dev");
 
             // Check common variables exist
             let common = config.common.as_ref().unwrap();

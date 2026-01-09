@@ -9,8 +9,6 @@ fn test_exec_nonexistent_environment() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development environment"
@@ -39,8 +37,6 @@ fn test_exec_simple_environment() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development environment"
@@ -73,8 +69,6 @@ fn test_exec_with_inheritance() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "prod"
 
 [environments.base]
 description = "Base environment"
@@ -112,8 +106,6 @@ fn test_exec_with_common_variables() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [common]
 APP_NAME = "MyApp"
@@ -154,8 +146,6 @@ fn test_exec_with_interpolation() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development environment"
@@ -190,8 +180,6 @@ fn test_exec_nonexistent_command() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development environment"
@@ -216,8 +204,6 @@ fn test_exec_empty_command() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development environment"
@@ -239,8 +225,6 @@ fn test_exec_exit_code_propagation() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development environment"
@@ -277,8 +261,6 @@ fn test_exec_requires_confirmation_without_yes_flag() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "prod"
 
 [environments.prod]
 description = "Production environment"
@@ -311,8 +293,6 @@ fn test_exec_requires_confirmation_with_yes_flag() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "prod"
 
 [environments.prod]
 description = "Production environment"
@@ -345,8 +325,6 @@ fn test_exec_no_confirmation_required_works_without_flag() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development environment"

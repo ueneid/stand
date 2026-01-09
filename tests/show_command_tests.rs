@@ -9,8 +9,6 @@ fn test_show_names_only_simple() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [common]
 APP_NAME = "MyApp"
@@ -45,8 +43,6 @@ fn test_show_with_values() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [common]
 APP_NAME = "MyApp"
@@ -81,8 +77,6 @@ fn test_show_with_interpolation() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development environment"
@@ -107,8 +101,6 @@ fn test_show_inheritance_chain() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [common]
 APP_NAME = "MyApp"
@@ -148,8 +140,6 @@ fn test_show_nonexistent_environment() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development environment"
@@ -172,8 +162,6 @@ fn test_show_empty_environment() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "empty"
 
 [environments.empty]
 description = "Empty environment"
@@ -198,8 +186,6 @@ fn test_show_interpolation_error() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development environment"
@@ -222,8 +208,6 @@ fn test_show_override_behavior() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "prod"
 
 [common]
 LOG_LEVEL = "info"
@@ -259,8 +243,6 @@ fn test_show_sorting() {
     let config_content = r#"
 version = "2.0"
 
-[settings]
-default_environment = "dev"
 
 [environments.dev]
 description = "Development environment"

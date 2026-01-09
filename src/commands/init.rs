@@ -72,15 +72,11 @@ fn set_secure_permissions(path: &Path) -> Result<()> {
 ///
 /// Creates a template with:
 /// - Version 2.0 configuration format
-/// - Default environment set to "dev"
 /// - Commented `[common]` section for shared variables
 /// - Pre-configured "dev" environment (green color)
 /// - Pre-configured "prod" environment (red color, requires confirmation)
 fn generate_default_template() -> String {
     r#"version = "2.0"
-
-[settings]
-default_environment = "dev"
 
 # Common variables shared across all environments
 # Uncomment and add your shared variables here:
@@ -128,13 +124,6 @@ mod tests {
     fn test_generate_default_template_contains_version() {
         let template = generate_default_template();
         assert!(template.contains(r#"version = "2.0""#));
-    }
-
-    #[test]
-    fn test_generate_default_template_contains_settings() {
-        let template = generate_default_template();
-        assert!(template.contains("[settings]"));
-        assert!(template.contains(r#"default_environment = "dev""#));
     }
 
     #[test]

@@ -11,8 +11,7 @@ Stand uses a single TOML configuration file named `.stand.toml` located at the p
 version = "2.0"
 
 [settings]
-default_environment = "dev"
-show_env_in_prompt = true
+show_env_in_prompt = true  # Optional: customize shell behavior
 
 [common]
 # Shared variables across all environments
@@ -21,11 +20,12 @@ show_env_in_prompt = true
 # Environment-specific configuration
 ```
 
-### Settings Section
+### Settings Section (Optional)
+The `[settings]` section is optional and used to customize Stand's behavior:
 ```toml
 [settings]
-default_environment = "dev"    # Default environment to use
 show_env_in_prompt = true      # Show current env in shell prompt
+nested_shell_behavior = "warn" # How to handle nested shells: "prevent", "warn", "allow"
 ```
 
 ### Common Variables Section
@@ -113,7 +113,6 @@ DEBUG = "false"         # Overrides dev value
 version = "2.0"
 
 [settings]
-default_environment = "dev"
 show_env_in_prompt = true
 
 [common]
