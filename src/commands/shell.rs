@@ -141,6 +141,11 @@ pub fn validate_shell_environment(
         shell_env.insert("STAND_ENV_COLOR".to_string(), color.clone());
     }
 
+    // Add auto-exit flag if configured
+    if config.settings.auto_exit_on_dir_change == Some(true) {
+        shell_env.insert("STAND_AUTO_EXIT".to_string(), "1".to_string());
+    }
+
     Ok(ValidatedShellEnv {
         shell_path,
         env_vars: shell_env,
@@ -373,5 +378,92 @@ DATABASE_URL = "postgres://prod:5432/prod"
         assert!(result.is_ok());
         let validated = result.unwrap();
         assert_eq!(validated.env_name, "prod");
+    }
+
+    #[test]
+    #[serial]
+    fn test_shell_auto_exit_sets_env_var_when_enabled() {
+        // Ensure we're not in a Stand shell
+        env::remove_var("STAND_ACTIVE");
+        env::remove_var("STAND_ENVIRONMENT");
+
+        let dir = tempdir().unwrap();
+        let config_content = r#"
+version = "2.0"
+
+[settings]
+auto_exit_on_dir_change = true
+
+[environments.dev]
+description = "Development environment"
+"#;
+
+        let config_path = dir.path().join(".stand.toml");
+        fs::write(&config_path, config_content).unwrap();
+
+        let result = validate_shell_environment(dir.path(), "dev", false, None);
+
+        assert!(result.is_ok());
+        let validated = result.unwrap();
+        // STAND_AUTO_EXIT should be set when auto_exit_on_dir_change = true
+        assert_eq!(
+            validated.env_vars.get("STAND_AUTO_EXIT"),
+            Some(&"1".to_string())
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_shell_auto_exit_not_set_when_disabled() {
+        // Ensure we're not in a Stand shell
+        env::remove_var("STAND_ACTIVE");
+        env::remove_var("STAND_ENVIRONMENT");
+
+        let dir = tempdir().unwrap();
+        let config_content = r#"
+version = "2.0"
+
+[settings]
+auto_exit_on_dir_change = false
+
+[environments.dev]
+description = "Development environment"
+"#;
+
+        let config_path = dir.path().join(".stand.toml");
+        fs::write(&config_path, config_content).unwrap();
+
+        let result = validate_shell_environment(dir.path(), "dev", false, None);
+
+        assert!(result.is_ok());
+        let validated = result.unwrap();
+        // STAND_AUTO_EXIT should NOT be set when auto_exit_on_dir_change = false
+        assert!(!validated.env_vars.contains_key("STAND_AUTO_EXIT"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_shell_auto_exit_not_set_by_default() {
+        // Ensure we're not in a Stand shell
+        env::remove_var("STAND_ACTIVE");
+        env::remove_var("STAND_ENVIRONMENT");
+
+        let dir = tempdir().unwrap();
+        let config_content = r#"
+version = "2.0"
+
+[environments.dev]
+description = "Development environment"
+"#;
+
+        let config_path = dir.path().join(".stand.toml");
+        fs::write(&config_path, config_content).unwrap();
+
+        let result = validate_shell_environment(dir.path(), "dev", false, None);
+
+        assert!(result.is_ok());
+        let validated = result.unwrap();
+        // STAND_AUTO_EXIT should NOT be set by default (when setting is not specified)
+        assert!(!validated.env_vars.contains_key("STAND_AUTO_EXIT"));
     }
 }

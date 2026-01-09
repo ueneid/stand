@@ -136,7 +136,7 @@ fn setup_zsh_zdotdir(
     zshenv_file.write_all(zshenv_content.as_bytes())?;
 
     // Write custom .zshrc
-    // This sources the user's .zshrc first, then adds our precmd
+    // This sources the user's .zshrc first, then adds our precmd and chpwd hooks
     let zshrc_content = format!(
         r#"# Stand temporary zshrc
 # Restore original ZDOTDIR for child shells
@@ -144,6 +144,25 @@ export ZDOTDIR="$HOME"
 
 # Source user's original .zshrc if it exists
 [[ -f "$HOME/.zshrc" ]] && source "$HOME/.zshrc"
+
+# Stand chpwd function for auto-exit when leaving project directory
+# Only active when STAND_AUTO_EXIT=1
+_stand_chpwd() {{
+    if [[ "$STAND_AUTO_EXIT" = "1" ]] && [[ -n "$STAND_PROJECT_ROOT" ]]; then
+        local current_real="$(cd "$PWD" 2>/dev/null && pwd -P)"
+        local root_real="$(cd "$STAND_PROJECT_ROOT" 2>/dev/null && pwd -P)"
+        case "$current_real" in
+            "$root_real"|"$root_real"/*) ;;
+            *)
+                echo "Left project directory. Exiting Stand shell..."
+                exit 0
+                ;;
+        esac
+    fi
+}}
+
+# Add to chpwd_functions array (runs on directory change)
+chpwd_functions+=(_stand_chpwd)
 
 # Stand precmd function for prompt customization
 _stand_precmd() {{
@@ -179,7 +198,18 @@ fn get_shell_args(shell_type: &ShellType) -> Vec<String> {
             // Fish uses functions for prompts, not environment variables.
             // We use -C to inject an init command that wraps the existing fish_prompt
             // function to prepend our Stand indicator with color from config.
+            // Also adds a PWD variable watcher for auto-exit when leaving project directory.
             let init_cmd = concat!(
+                // Auto-exit function when leaving project directory
+                "function _stand_check_dir --on-variable PWD; ",
+                "if test \"$STAND_AUTO_EXIT\" = \"1\" -a -n \"$STAND_PROJECT_ROOT\"; ",
+                "set -l current_real (cd $PWD 2>/dev/null; and pwd -P); ",
+                "set -l root_real (cd $STAND_PROJECT_ROOT 2>/dev/null; and pwd -P); ",
+                "if not string match -q \"$root_real\" \"$current_real\"; ",
+                "and not string match -q \"$root_real/*\" \"$current_real\"; ",
+                "echo 'Left project directory. Exiting Stand shell...'; exit 0; ",
+                "end; end; end; ",
+                // Prompt customization
                 "functions -c fish_prompt _stand_original_fish_prompt 2>/dev/null; ",
                 "or function _stand_original_fish_prompt; echo '> '; end; ",
                 "function fish_prompt; ",
