@@ -141,8 +141,8 @@ pub fn validate_shell_environment(
         shell_env.insert("STAND_ENV_COLOR".to_string(), color.clone());
     }
 
-    // Add auto-exit flag if configured
-    if config.settings.auto_exit_on_dir_change == Some(true) {
+    // Add auto-exit flag (enabled by default, can be disabled with auto_exit_on_dir_change = false)
+    if config.settings.auto_exit_on_dir_change != Some(false) {
         shell_env.insert("STAND_AUTO_EXIT".to_string(), "1".to_string());
     }
 
@@ -443,7 +443,7 @@ description = "Development environment"
 
     #[test]
     #[serial]
-    fn test_shell_auto_exit_not_set_by_default() {
+    fn test_shell_auto_exit_enabled_by_default() {
         // Ensure we're not in a Stand shell
         env::remove_var("STAND_ACTIVE");
         env::remove_var("STAND_ENVIRONMENT");
@@ -463,7 +463,10 @@ description = "Development environment"
 
         assert!(result.is_ok());
         let validated = result.unwrap();
-        // STAND_AUTO_EXIT should NOT be set by default (when setting is not specified)
-        assert!(!validated.env_vars.contains_key("STAND_AUTO_EXIT"));
+        // STAND_AUTO_EXIT should be set by default (when setting is not specified)
+        assert_eq!(
+            validated.env_vars.get("STAND_AUTO_EXIT"),
+            Some(&"1".to_string())
+        );
     }
 }
