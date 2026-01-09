@@ -15,7 +15,7 @@ pub fn handle_current() -> Result<()> {
                 }
                 None => {
                     println!("No environment is currently active");
-                    println!("Use 'stand switch <environment>' to set an active environment");
+                    println!("Use 'stand shell <environment>' to activate an environment");
                 }
             }
             Ok(())

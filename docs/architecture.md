@@ -15,7 +15,6 @@ Stand is designed as a modular CLI tool with clear separation of concerns. The a
 │   formatting    │    │ • shell         │    │ • Interpolation │
 └─────────────────┘    │ • exec          │    └─────────────────┘
                        │ • show          │              │
-                       │ • switch        │              │
                        │ • set/unset     │              ▼
                        └─────────────────┘    ┌─────────────────┐
                                               │  Infrastructure │
@@ -46,7 +45,6 @@ src/
 │   ├── shell.rs         # Shell integration
 │   ├── exec.rs          # Execute with environment
 │   ├── show.rs          # Display variables
-│   ├── switch.rs        # Change default environment
 │   └── variables.rs     # Set/unset variables
 ├── config/              # Configuration management
 │   ├── mod.rs

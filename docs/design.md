@@ -272,7 +272,6 @@ Commands map to distinct handlers:
 - `exec` → Execute command
 - `list` → Display environments
 - `show` → Display variables
-- `switch` → Change default
 - `set/unset` → Modify variables
 - `validate` → Check configuration
 - `current` → Show active environment
