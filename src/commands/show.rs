@@ -30,8 +30,7 @@ pub fn show_environment(project_path: &Path, env_name: &str, show_values: bool) 
         })?;
 
     // Detect variable sources
-    let sources =
-        detect_variable_sources(&raw_config, env_name).map_err(anyhow::Error::from)?;
+    let sources = detect_variable_sources(&raw_config, env_name).map_err(anyhow::Error::from)?;
 
     // Format output
     let output = format_variables(env_name, &env.variables, &sources, show_values);
