@@ -24,6 +24,8 @@ pub struct Environment {
 pub struct Settings {
     pub nested_shell_behavior: Option<NestedBehavior>,
     pub show_env_in_prompt: Option<bool>,
+    /// If true, automatically exit the Stand subshell when navigating outside the project directory
+    pub auto_exit_on_dir_change: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

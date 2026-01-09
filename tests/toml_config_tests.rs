@@ -88,6 +88,7 @@ DEBUG = "false"
             settings: Settings {
                 nested_shell_behavior: Some(NestedBehavior::Prevent),
                 show_env_in_prompt: Some(true),
+                auto_exit_on_dir_change: None,
             },
             common: Some({
                 let mut map = HashMap::new();
@@ -160,5 +161,57 @@ description = "Development environment"
 
         assert_eq!(config.version, "2.0");
         // default_environment is ignored but file should parse without error
+    }
+
+    #[test]
+    fn test_auto_exit_on_dir_change_setting() {
+        let toml_content = r#"
+version = "2.0"
+
+[settings]
+auto_exit_on_dir_change = true
+
+[environments.dev]
+description = "Development environment"
+"#;
+
+        let config: Configuration = toml::from_str(toml_content)
+            .expect("Failed to parse TOML with auto_exit_on_dir_change");
+
+        assert_eq!(config.settings.auto_exit_on_dir_change, Some(true));
+    }
+
+    #[test]
+    fn test_auto_exit_on_dir_change_default_none() {
+        let toml_content = r#"
+version = "2.0"
+
+[environments.dev]
+description = "Development environment"
+"#;
+
+        let config: Configuration =
+            toml::from_str(toml_content).expect("Failed to parse minimal TOML");
+
+        // Default should be None (not set)
+        assert_eq!(config.settings.auto_exit_on_dir_change, None);
+    }
+
+    #[test]
+    fn test_auto_exit_on_dir_change_false() {
+        let toml_content = r#"
+version = "2.0"
+
+[settings]
+auto_exit_on_dir_change = false
+
+[environments.dev]
+description = "Development environment"
+"#;
+
+        let config: Configuration = toml::from_str(toml_content)
+            .expect("Failed to parse TOML with auto_exit_on_dir_change = false");
+
+        assert_eq!(config.settings.auto_exit_on_dir_change, Some(false));
     }
 }
