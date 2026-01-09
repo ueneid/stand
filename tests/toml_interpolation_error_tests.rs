@@ -78,7 +78,7 @@ DATABASE_URL = "postgres://localhost:5432/dev"
 fn test_interpolation_multiple_variables_success() {
     let dir = tempdir().unwrap();
 
-    // 環境変数を設定
+    // Set environment variables
     std::env::set_var("PREFIX", "api");
     std::env::set_var("VERSION", "v1");
     std::env::set_var("ENDPOINT", "users");
@@ -106,7 +106,7 @@ DATABASE_URL = "postgres://${PREFIX}_${VERSION}.example.com/app"
         "postgres://api_v1.example.com/app"
     );
 
-    // 環境変数をクリーンアップ
+    // Clean up environment variables
     std::env::remove_var("PREFIX");
     std::env::remove_var("VERSION");
     std::env::remove_var("ENDPOINT");
@@ -117,7 +117,7 @@ DATABASE_URL = "postgres://${PREFIX}_${VERSION}.example.com/app"
 fn test_interpolation_in_common_variables() {
     let dir = tempdir().unwrap();
 
-    // 環境変数を設定
+    // Set environment variables
     std::env::set_var("APP_PREFIX", "myapp");
 
     let config_content = r#"
@@ -142,11 +142,11 @@ DEBUG = "true"
     let config = result.unwrap();
     let dev_env = &config.environments["dev"];
 
-    // common変数が正しく展開されて継承されている
+    // common variables are properly interpolated and inherited
     assert_eq!(dev_env.variables["APP_NAME"], "myapp_service");
     assert_eq!(dev_env.variables["LOG_LEVEL"], "info");
     assert_eq!(dev_env.variables["DEBUG"], "true");
 
-    // 環境変数をクリーンアップ
+    // Clean up environment variables
     std::env::remove_var("APP_PREFIX");
 }

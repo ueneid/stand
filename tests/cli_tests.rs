@@ -133,7 +133,7 @@ requires_confirmation = true
         .stdout(predicate::str::contains("Production environment"))
         .stdout(predicate::str::contains("[green]"))
         .stdout(predicate::str::contains("[red]"))
-        .stdout(predicate::str::contains("確認要"));
+        .stdout(predicate::str::contains("(requires confirmation)"));
 }
 
 #[test]
