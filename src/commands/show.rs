@@ -1,4 +1,4 @@
-use crate::config::loader;
+use crate::config::{loader, ConfigError};
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::path::Path;
@@ -30,7 +30,7 @@ pub fn show_environment(project_path: &Path, env_name: &str, show_values: bool) 
         })?;
 
     // Detect variable sources
-    let sources = detect_variable_sources(&raw_config, env_name)?;
+    let sources = detect_variable_sources(&raw_config, env_name).map_err(anyhow::Error::from)?;
 
     // Format output
     let output = format_variables(env_name, &env.variables, &sources, show_values);
@@ -50,14 +50,17 @@ enum VarSource {
 fn detect_variable_sources(
     raw_config: &crate::config::types::Configuration,
     env_name: &str,
-) -> Result<HashMap<String, VarSource>> {
+) -> Result<HashMap<String, VarSource>, ConfigError> {
     let mut sources = HashMap::new();
 
     // Get environment
-    let env = raw_config
-        .environments
-        .get(env_name)
-        .ok_or_else(|| anyhow!("Environment '{}' not found", env_name))?;
+    let env =
+        raw_config
+            .environments
+            .get(env_name)
+            .ok_or_else(|| ConfigError::InvalidEnvironment {
+                name: env_name.to_string(),
+            })?;
 
     // Get inheritance chain
     let inheritance_chain = get_inheritance_chain(raw_config, env_name)?;
@@ -113,7 +116,7 @@ fn detect_variable_sources(
 fn get_inheritance_chain(
     config: &crate::config::types::Configuration,
     env_name: &str,
-) -> Result<Vec<String>> {
+) -> Result<Vec<String>, ConfigError> {
     let mut chain = Vec::new();
     let mut current = env_name;
 
