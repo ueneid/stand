@@ -24,9 +24,17 @@ show_env_in_prompt = true  # Optional: customize shell behavior
 The `[settings]` section is optional and used to customize Stand's behavior:
 ```toml
 [settings]
-show_env_in_prompt = true      # Show current env in shell prompt
-nested_shell_behavior = "warn" # How to handle nested shells: "prevent", "warn", "allow"
+show_env_in_prompt = true         # Show current env in shell prompt
+nested_shell_behavior = "warn"    # How to handle nested shells: "prevent", "warn", "allow"
+auto_exit_on_dir_change = true    # Auto-exit shell when leaving project directory
 ```
+
+#### auto_exit_on_dir_change
+When set to `true`, the Stand subshell will automatically exit when you navigate to a directory outside the project root (the directory containing `.stand.toml`). This helps maintain clear boundaries between project environments.
+
+- Child directories within the project are allowed
+- Exiting to parent or sibling directories triggers auto-exit
+- Works with bash, zsh, and fish shells
 
 ### Common Variables Section
 Variables defined in `[common]` are inherited by all environments:

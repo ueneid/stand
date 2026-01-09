@@ -105,6 +105,7 @@ Current solutions either require verbose command prefixes for every execution or
 - **FR-2.3**: Users SHALL be able to execute single commands with a specific environment
 - **FR-2.4**: The tool SHALL prevent nested environment activation
 - **FR-2.5**: Users SHALL be able to exit an environment cleanly
+- **FR-2.6**: Users SHALL be able to configure automatic exit when leaving the project directory
 
 ### 5.3 Variable Management
 
