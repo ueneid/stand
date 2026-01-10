@@ -214,7 +214,7 @@ fn get_shell_args(shell_type: &ShellType) -> Vec<String> {
             // The _stand_reverting flag prevents recursion when we revert the directory.
             let init_cmd = concat!(
                 // Initialize state variables
-                "set -g _stand_prev_dir $PWD; ",
+                "set -g _stand_prev_dir \"$PWD\"; ",
                 "set -g _stand_reverting 0; ",
                 // Directory guard function when leaving project directory
                 "function _stand_check_dir --on-variable PWD; ",
@@ -229,7 +229,7 @@ fn get_shell_args(shell_type: &ShellType) -> Vec<String> {
                 "echo '⚠️  Cannot leave project directory while in Stand shell.'; ",
                 "echo '    Type \\'exit\\' to leave the Stand shell first.'; ",
                 "return; end; end; ",
-                "set -g _stand_prev_dir $PWD; end; ",
+                "set -g _stand_prev_dir \"$PWD\"; end; ",
                 // Prompt customization
                 "functions -c fish_prompt _stand_original_fish_prompt 2>/dev/null; ",
                 "or function _stand_original_fish_prompt; echo '> '; end; ",
