@@ -6,10 +6,16 @@ A CLI tool for explicit environment variable management that provides a clean, o
 
 ### Installation
 
+**From crates.io (recommended):**
+```bash
+cargo install stand
+```
+
+**From source:**
 ```bash
 git clone https://github.com/ueneid/stand
 cd stand
-cargo build --release
+cargo install --path .
 ```
 
 ### Basic Usage
