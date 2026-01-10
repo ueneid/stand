@@ -158,8 +158,13 @@ _stand_chpwd() {{
                 _stand_prev_dir="$PWD"
                 ;;
             *)
-                # Revert to previous directory
-                builtin cd "$_stand_prev_dir"
+                # Revert to previous directory with fallback
+                if ! builtin cd "$_stand_prev_dir" 2>/dev/null; then
+                    if ! builtin cd "$STAND_PROJECT_ROOT" 2>/dev/null; then
+                        echo "⚠️  Cannot return to project directory. Exiting Stand shell."
+                        exit 1
+                    fi
+                fi
                 echo "⚠️  Cannot leave project directory while in Stand shell."
                 echo "    Type 'exit' to leave the Stand shell first."
                 ;;
@@ -218,9 +223,11 @@ fn get_shell_args(shell_type: &ShellType) -> Vec<String> {
                 "if not string match -q \"$STAND_PROJECT_ROOT\" \"$PWD\"; ",
                 "and not string match -q \"$STAND_PROJECT_ROOT/*\" \"$PWD\"; ",
                 "set -g _stand_reverting 1; ",
-                "builtin cd $_stand_prev_dir; ",
+                "if not builtin cd \"$_stand_prev_dir\" 2>/dev/null; ",
+                "if not builtin cd \"$STAND_PROJECT_ROOT\" 2>/dev/null; ",
+                "echo '⚠️  Cannot return to project directory. Exiting Stand shell.'; exit 1; end; end; ",
                 "echo '⚠️  Cannot leave project directory while in Stand shell.'; ",
-                "echo '    Type exit to leave the Stand shell first.'; ",
+                "echo '    Type \\'exit\\' to leave the Stand shell first.'; ",
                 "return; end; end; ",
                 "set -g _stand_prev_dir $PWD; end; ",
                 // Prompt customization

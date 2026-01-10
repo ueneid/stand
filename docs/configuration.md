@@ -35,13 +35,13 @@ Controls whether the Stand subshell prevents navigation to directories outside t
 **Default: `true` (enabled)**
 
 When enabled and you attempt to navigate outside the project directory:
-- The navigation is blocked and you stay in your current directory
+- The directory change is automatically reverted to your previous location
 - A warning message is displayed explaining why
 - You can type `exit` to leave the Stand shell and navigate freely
 
 Behavior:
 - Child directories within the project are allowed
-- Navigating to parent or sibling directories is blocked
+- Navigating to parent or sibling directories is reverted
 - Works with bash, zsh, and fish shells (any directory-changing command)
 - Set to `false` to disable this behavior
 
