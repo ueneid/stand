@@ -136,7 +136,7 @@ fn setup_zsh_zdotdir(
     zshenv_file.write_all(zshenv_content.as_bytes())?;
 
     // Write custom .zshrc
-    // This sources the user's .zshrc first, then adds our precmd
+    // This sources the user's .zshrc first, then adds our precmd and chpwd hooks
     let zshrc_content = format!(
         r#"# Stand temporary zshrc
 # Restore original ZDOTDIR for child shells
@@ -144,6 +144,36 @@ export ZDOTDIR="$HOME"
 
 # Source user's original .zshrc if it exists
 [[ -f "$HOME/.zshrc" ]] && source "$HOME/.zshrc"
+
+# Track previous directory for reverting
+typeset -g _stand_prev_dir="$PWD"
+
+# Stand chpwd function for directory guard when leaving project directory
+# Only active when STAND_AUTO_EXIT=1
+# Uses logical paths ($PWD) instead of physical paths to allow symlinks
+_stand_chpwd() {{
+    if [[ "$STAND_AUTO_EXIT" = "1" ]] && [[ -n "$STAND_PROJECT_ROOT" ]]; then
+        case "$PWD" in
+            "$STAND_PROJECT_ROOT"|"$STAND_PROJECT_ROOT"/*)
+                _stand_prev_dir="$PWD"
+                ;;
+            *)
+                # Revert to previous directory with fallback
+                if ! builtin cd "$_stand_prev_dir" 2>/dev/null; then
+                    if ! builtin cd "$STAND_PROJECT_ROOT" 2>/dev/null; then
+                        echo "⚠️  Cannot return to project directory. Exiting Stand shell."
+                        exit 1
+                    fi
+                fi
+                echo "⚠️  Cannot leave project directory while in Stand shell."
+                echo "    Type 'exit' to leave the Stand shell first."
+                ;;
+        esac
+    fi
+}}
+
+# Add to chpwd_functions array (runs on directory change)
+chpwd_functions+=(_stand_chpwd)
 
 # Stand precmd function for prompt customization
 _stand_precmd() {{
@@ -179,7 +209,28 @@ fn get_shell_args(shell_type: &ShellType) -> Vec<String> {
             // Fish uses functions for prompts, not environment variables.
             // We use -C to inject an init command that wraps the existing fish_prompt
             // function to prepend our Stand indicator with color from config.
+            // Also adds a PWD variable watcher for directory guard when leaving project directory.
+            // Uses logical paths ($PWD) instead of physical paths to allow symlinks.
+            // The _stand_reverting flag prevents recursion when we revert the directory.
             let init_cmd = concat!(
+                // Initialize state variables
+                "set -g _stand_prev_dir \"$PWD\"; ",
+                "set -g _stand_reverting 0; ",
+                // Directory guard function when leaving project directory
+                "function _stand_check_dir --on-variable PWD; ",
+                "if test \"$_stand_reverting\" = \"1\"; set -g _stand_reverting 0; return; end; ",
+                "if test \"$STAND_AUTO_EXIT\" = \"1\" -a -n \"$STAND_PROJECT_ROOT\"; ",
+                "if not string match -q \"$STAND_PROJECT_ROOT\" \"$PWD\"; ",
+                "and not string match -q \"$STAND_PROJECT_ROOT/*\" \"$PWD\"; ",
+                "set -g _stand_reverting 1; ",
+                "if not builtin cd \"$_stand_prev_dir\" 2>/dev/null; ",
+                "if not builtin cd \"$STAND_PROJECT_ROOT\" 2>/dev/null; ",
+                "echo '⚠️  Cannot return to project directory. Exiting Stand shell.'; exit 1; end; end; ",
+                "echo '⚠️  Cannot leave project directory while in Stand shell.'; ",
+                "echo '    Type \\'exit\\' to leave the Stand shell first.'; ",
+                "return; end; end; ",
+                "set -g _stand_prev_dir \"$PWD\"; end; ",
+                // Prompt customization
                 "functions -c fish_prompt _stand_original_fish_prompt 2>/dev/null; ",
                 "or function _stand_original_fish_prompt; echo '> '; end; ",
                 "function fish_prompt; ",

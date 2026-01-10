@@ -9,6 +9,9 @@ use std::collections::HashMap;
 /// Environment variable for Stand prompt prefix
 pub const STAND_PROMPT: &str = "STAND_PROMPT";
 
+/// Environment variable to enable auto-exit when leaving project directory
+pub const STAND_AUTO_EXIT: &str = "STAND_AUTO_EXIT";
+
 /// Generate the prompt prefix for displaying the active environment
 ///
 /// Returns a string like "(stand:dev) " that can be prepended to PS1
@@ -34,10 +37,14 @@ pub fn get_prompt_env_vars(shell_type: &ShellType, env_name: &str) -> HashMap<St
             // Uses $STAND_ENVIRONMENT and $STAND_ENV_COLOR for dynamic values.
             // Color codes: bold=1, reverse=7, green=32, reset=0
             // Note: Using tr for uppercase conversion for compatibility with Bash 3.x (macOS default)
-            vars.insert(
-                "PROMPT_COMMAND".to_string(),
-                r#"if [ -z "$STAND_ORIGINAL_PS1" ]; then export STAND_ORIGINAL_PS1="$PS1"; fi; _c="${STAND_ENV_COLOR:-green}"; case "$_c" in red) _cc=31;; green) _cc=32;; yellow) _cc=33;; blue) _cc=34;; magenta|purple) _cc=35;; cyan) _cc=36;; *) _cc=32;; esac; _env_upper=$(echo "$STAND_ENVIRONMENT" | tr '[:lower:]' '[:upper:]'); PS1=$'\n\e[1;7;'"$_cc"'m stand:'"$_env_upper"$' \e[0m'"$STAND_ORIGINAL_PS1""#.to_string(),
-            );
+            //
+            // Directory guard (when STAND_AUTO_EXIT=1):
+            // Checks if current directory is still within STAND_PROJECT_ROOT.
+            // If outside, reverts to the previous directory and shows a warning.
+            // Uses logical paths ($PWD) instead of physical paths (pwd -P) to allow
+            // symlinks within the project to work as expected.
+            let prompt_command = r#"if [ -z "$_stand_prev_dir" ]; then _stand_prev_dir="$PWD"; fi; if [ -z "$STAND_ORIGINAL_PS1" ]; then export STAND_ORIGINAL_PS1="$PS1"; fi; if [ "$STAND_AUTO_EXIT" = "1" ] && [ -n "$STAND_PROJECT_ROOT" ]; then case "$PWD" in "$STAND_PROJECT_ROOT"|"$STAND_PROJECT_ROOT"/*) _stand_prev_dir="$PWD";; *) if ! cd "$_stand_prev_dir" 2>/dev/null; then if ! cd "$STAND_PROJECT_ROOT" 2>/dev/null; then echo "⚠️  Cannot return to project directory. Exiting Stand shell."; exit 1; fi; fi; echo "⚠️  Cannot leave project directory while in Stand shell."; echo "    Type 'exit' to leave the Stand shell first.";; esac; fi; _c="${STAND_ENV_COLOR:-green}"; case "$_c" in red) _cc=31;; green) _cc=32;; yellow) _cc=33;; blue) _cc=34;; magenta|purple) _cc=35;; cyan) _cc=36;; *) _cc=32;; esac; _env_upper=$(echo "$STAND_ENVIRONMENT" | tr '[:lower:]' '[:upper:]'); PS1=$'\n\e[1;7;'"$_cc"'m stand:'"$_env_upper"$' \e[0m'"$STAND_ORIGINAL_PS1""#;
+            vars.insert("PROMPT_COMMAND".to_string(), prompt_command.to_string());
         }
         ShellType::Zsh => {
             // Zsh: Set STAND_ZSH_PRECMD which will be evaled by the spawner's init command.
@@ -103,6 +110,19 @@ mod tests {
         assert!(prompt_cmd.contains("STAND_ENVIRONMENT"));
         // Uses $STAND_ENV_COLOR for color customization
         assert!(prompt_cmd.contains("STAND_ENV_COLOR"));
+    }
+
+    #[test]
+    fn test_get_prompt_env_vars_bash_includes_directory_guard() {
+        let vars = get_prompt_env_vars(&ShellType::Bash, "dev");
+        let prompt_cmd = vars.get("PROMPT_COMMAND").unwrap();
+        // Should check STAND_AUTO_EXIT and STAND_PROJECT_ROOT
+        assert!(prompt_cmd.contains("STAND_AUTO_EXIT"));
+        assert!(prompt_cmd.contains("STAND_PROJECT_ROOT"));
+        // Should track previous directory
+        assert!(prompt_cmd.contains("_stand_prev_dir"));
+        // Should revert to previous directory and show warning
+        assert!(prompt_cmd.contains("Cannot leave project directory"));
     }
 
     #[test]
