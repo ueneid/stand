@@ -150,12 +150,11 @@ typeset -g _stand_prev_dir="$PWD"
 
 # Stand chpwd function for directory guard when leaving project directory
 # Only active when STAND_AUTO_EXIT=1
+# Uses logical paths ($PWD) instead of physical paths to allow symlinks
 _stand_chpwd() {{
     if [[ "$STAND_AUTO_EXIT" = "1" ]] && [[ -n "$STAND_PROJECT_ROOT" ]]; then
-        local current_real="$(cd "$PWD" 2>/dev/null && pwd -P)"
-        local root_real="$(cd "$STAND_PROJECT_ROOT" 2>/dev/null && pwd -P)"
-        case "$current_real" in
-            "$root_real"|"$root_real"/*)
+        case "$PWD" in
+            "$STAND_PROJECT_ROOT"|"$STAND_PROJECT_ROOT"/*)
                 _stand_prev_dir="$PWD"
                 ;;
             *)
@@ -206,8 +205,7 @@ fn get_shell_args(shell_type: &ShellType) -> Vec<String> {
             // We use -C to inject an init command that wraps the existing fish_prompt
             // function to prepend our Stand indicator with color from config.
             // Also adds a PWD variable watcher for directory guard when leaving project directory.
-            // NOTE: We use `realpath` instead of `cd && pwd -P` to avoid triggering
-            // another PWD change which would cause infinite recursion.
+            // Uses logical paths ($PWD) instead of physical paths to allow symlinks.
             // The _stand_reverting flag prevents recursion when we revert the directory.
             let init_cmd = concat!(
                 // Initialize state variables
@@ -217,10 +215,8 @@ fn get_shell_args(shell_type: &ShellType) -> Vec<String> {
                 "function _stand_check_dir --on-variable PWD; ",
                 "if test \"$_stand_reverting\" = \"1\"; set -g _stand_reverting 0; return; end; ",
                 "if test \"$STAND_AUTO_EXIT\" = \"1\" -a -n \"$STAND_PROJECT_ROOT\"; ",
-                "set -l current_real (realpath \"$PWD\" 2>/dev/null; or echo \"$PWD\"); ",
-                "set -l root_real (realpath \"$STAND_PROJECT_ROOT\" 2>/dev/null; or echo \"$STAND_PROJECT_ROOT\"); ",
-                "if not string match -q \"$root_real\" \"$current_real\"; ",
-                "and not string match -q \"$root_real/*\" \"$current_real\"; ",
+                "if not string match -q \"$STAND_PROJECT_ROOT\" \"$PWD\"; ",
+                "and not string match -q \"$STAND_PROJECT_ROOT/*\" \"$PWD\"; ",
                 "set -g _stand_reverting 1; ",
                 "builtin cd $_stand_prev_dir; ",
                 "echo '⚠️  Cannot leave project directory while in Stand shell.'; ",

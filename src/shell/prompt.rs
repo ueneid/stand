@@ -41,8 +41,9 @@ pub fn get_prompt_env_vars(shell_type: &ShellType, env_name: &str) -> HashMap<St
             // Directory guard (when STAND_AUTO_EXIT=1):
             // Checks if current directory is still within STAND_PROJECT_ROOT.
             // If outside, reverts to the previous directory and shows a warning.
-            // Uses case pattern matching for reliable prefix check.
-            let prompt_command = r#"if [ -z "$_stand_prev_dir" ]; then _stand_prev_dir="$PWD"; fi; if [ -z "$STAND_ORIGINAL_PS1" ]; then export STAND_ORIGINAL_PS1="$PS1"; fi; if [ "$STAND_AUTO_EXIT" = "1" ] && [ -n "$STAND_PROJECT_ROOT" ]; then _stand_cur="$(cd "$PWD" 2>/dev/null && pwd -P)"; _stand_root="$(cd "$STAND_PROJECT_ROOT" 2>/dev/null && pwd -P)"; case "$_stand_cur" in "$_stand_root"|"$_stand_root"/*) _stand_prev_dir="$PWD";; *) cd "$_stand_prev_dir"; echo "⚠️  Cannot leave project directory while in Stand shell."; echo "    Type 'exit' to leave the Stand shell first.";; esac; fi; _c="${STAND_ENV_COLOR:-green}"; case "$_c" in red) _cc=31;; green) _cc=32;; yellow) _cc=33;; blue) _cc=34;; magenta|purple) _cc=35;; cyan) _cc=36;; *) _cc=32;; esac; _env_upper=$(echo "$STAND_ENVIRONMENT" | tr '[:lower:]' '[:upper:]'); PS1=$'\n\e[1;7;'"$_cc"'m stand:'"$_env_upper"$' \e[0m'"$STAND_ORIGINAL_PS1""#;
+            // Uses logical paths ($PWD) instead of physical paths (pwd -P) to allow
+            // symlinks within the project to work as expected.
+            let prompt_command = r#"if [ -z "$_stand_prev_dir" ]; then _stand_prev_dir="$PWD"; fi; if [ -z "$STAND_ORIGINAL_PS1" ]; then export STAND_ORIGINAL_PS1="$PS1"; fi; if [ "$STAND_AUTO_EXIT" = "1" ] && [ -n "$STAND_PROJECT_ROOT" ]; then case "$PWD" in "$STAND_PROJECT_ROOT"|"$STAND_PROJECT_ROOT"/*) _stand_prev_dir="$PWD";; *) cd "$_stand_prev_dir"; echo "⚠️  Cannot leave project directory while in Stand shell."; echo "    Type 'exit' to leave the Stand shell first.";; esac; fi; _c="${STAND_ENV_COLOR:-green}"; case "$_c" in red) _cc=31;; green) _cc=32;; yellow) _cc=33;; blue) _cc=34;; magenta|purple) _cc=35;; cyan) _cc=36;; *) _cc=32;; esac; _env_upper=$(echo "$STAND_ENVIRONMENT" | tr '[:lower:]' '[:upper:]'); PS1=$'\n\e[1;7;'"$_cc"'m stand:'"$_env_upper"$' \e[0m'"$STAND_ORIGINAL_PS1""#;
             vars.insert("PROMPT_COMMAND".to_string(), prompt_command.to_string());
         }
         ShellType::Zsh => {
