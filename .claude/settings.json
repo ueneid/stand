@@ -1,8 +1,6 @@
 {
   "permissions": {
-    "allow": [
-      "gh pr list"
-    ],
+    "allow": [],
     "deny": [],
     "ask": []
   }

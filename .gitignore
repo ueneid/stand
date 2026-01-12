@@ -1,3 +1,4 @@
 /target
 .serena/
 .stand/state.json
+.stand.toml
