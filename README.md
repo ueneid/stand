@@ -47,6 +47,9 @@ Create a `.stand.toml` file in your project root:
 ```toml
 version = "2.0"
 
+[settings]
+auto_exit_on_dir_change = true  # Prevent navigation outside project directory
+
 [common]
 APP_NAME = "MyApp"
 LOG_FORMAT = "json"
@@ -65,6 +68,8 @@ requires_confirmation = true
 DATABASE_URL = "postgres://prod.example.com/myapp"
 DEBUG = "false"
 ```
+
+See [Configuration Format](docs/configuration.md) for all available settings.
 
 ## Features
 
@@ -100,8 +105,8 @@ Each example includes a complete `.stand.toml` configuration and usage instructi
 - **[PR Review Guidelines](docs/pr-review-guidelines.md)** - Pull request checklist
 
 ### AI Assistant Documentation
-- **[AGENTS.md](AGENTS.md)** - AI assistant instructions and workflow guidelines
-- **[CLAUDE.md](CLAUDE.md)** - Quick reference for development
+- **[AGENTS.md](AGENTS.md)** - AI assistant instructions and development guidelines
+  - `CLAUDE.md` is a symlink to this file for Claude Code compatibility
 
 ## Development
 
