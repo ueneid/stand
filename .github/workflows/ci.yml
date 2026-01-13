@@ -1,0 +1,38 @@
+name: CI
+
+on:
+    push:
+    pull_request:
+    workflow_dispatch:
+#    schedule:
+#        - cron: '0 * * * *'
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Update rust
+        run: |
+            rustup update
+
+      - name: Show version
+        run: |
+            rustc --version
+            cargo --version
+
+      - name: cargo build
+        run: |
+            cargo build
+
+      - name: cargo test
+        run: |
+            cargo test
+
+      - name: Run cargo fmt --check
+        run: cargo fmt --check
+
+      - name: Run clippy
+        run: cargo clippy -- --deny warnings
+
