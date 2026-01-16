@@ -1,4 +1,5 @@
 use crate::config::{loader, ConfigError};
+use crate::crypto::is_encrypted;
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::path::Path;
@@ -155,9 +156,16 @@ fn format_variables(
     for var_name in var_names {
         let value = &variables[var_name];
         let source = sources.get(var_name).unwrap_or(&VarSource::Local);
+        let encrypted = is_encrypted(value);
 
         let line = if show_values {
-            format!("  {}={}", var_name, value)
+            if encrypted {
+                format!("  {}=[ENCRYPTED]", var_name)
+            } else {
+                format!("  {}={}", var_name, value)
+            }
+        } else if encrypted {
+            format!("  {} [ENCRYPTED]", var_name)
         } else {
             format!("  {}", var_name)
         };
@@ -297,5 +305,28 @@ mod tests {
         assert!(output.contains("APP_NAME=MyApp (from common)"));
         assert!(output.contains("DEBUG=true"));
         assert!(!output.contains("DEBUG=true ("));
+    }
+
+    #[test]
+    fn test_format_variables_with_encrypted_values() {
+        let mut variables = HashMap::new();
+        variables.insert("API_KEY".to_string(), "encrypted:abc123".to_string());
+        variables.insert("DEBUG".to_string(), "true".to_string());
+
+        let mut sources = HashMap::new();
+        sources.insert("API_KEY".to_string(), VarSource::Local);
+        sources.insert("DEBUG".to_string(), VarSource::Local);
+
+        // Test with show_values=true
+        let output = format_variables("dev", &variables, &sources, true);
+        assert!(output.contains("API_KEY=[ENCRYPTED]"));
+        assert!(!output.contains("encrypted:abc123"));
+        assert!(output.contains("DEBUG=true"));
+
+        // Test with show_values=false
+        let output = format_variables("dev", &variables, &sources, false);
+        assert!(output.contains("API_KEY [ENCRYPTED]"));
+        assert!(output.contains("DEBUG"));
+        assert!(!output.contains("DEBUG [ENCRYPTED]"));
     }
 }

@@ -16,6 +16,9 @@ pub enum Commands {
         /// Force initialization even if Stand is already initialized
         #[arg(short, long)]
         force: bool,
+        /// Initialize with encryption enabled (generates key pair)
+        #[arg(long)]
+        encrypt: bool,
     },
     /// Start a subshell with the specified environment
     Shell {
@@ -41,26 +44,33 @@ pub enum Commands {
     },
     /// List all available environments
     List,
-    /// Show environment variables for an environment
-    Show {
+    /// Inspect environment variables defined for an environment
+    Inspect {
         /// Environment name
         environment: String,
-        /// Show actual values instead of hiding them
-        #[arg(short, long)]
-        values: bool,
     },
-    /// Set a session variable
+    /// Set a variable in the configuration file
     Set {
+        /// Environment name
+        environment: String,
         /// Variable name
-        name: String,
-        /// Variable value
-        value: String,
+        key: String,
+        /// Variable value (if omitted with --encrypt, prompts for input)
+        value: Option<String>,
+        /// Encrypt the value before storing
+        #[arg(short, long)]
+        encrypt: bool,
     },
-    /// Unset a variable
-    Unset {
+    /// Get a variable value from the configuration
+    Get {
+        /// Environment name
+        environment: String,
         /// Variable name
-        name: String,
+        key: String,
     },
+    /// Manage encryption settings
+    #[command(subcommand)]
+    Encrypt(EncryptCommands),
     /// Validate the configuration
     Validate,
     /// Show the current active environment
@@ -77,4 +87,12 @@ pub enum Commands {
         #[arg(long, conflicts_with = "stand_only")]
         user_only: bool,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum EncryptCommands {
+    /// Enable encryption for this project (generates key pair)
+    Enable,
+    /// Disable encryption and decrypt all values
+    Disable,
 }

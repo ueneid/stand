@@ -1,14 +1,24 @@
 use clap::Parser;
-use stand::cli::commands::{Cli, Commands};
-use stand::commands::{current, env, exec, init, list, shell, show, validate};
+use stand::cli::commands::{Cli, Commands, EncryptCommands};
+use stand::commands::{current, encrypt, env, exec, get, init, list, set, shell, show, validate};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init { force } => {
+        Commands::Init {
+            force,
+            encrypt: enable_encrypt,
+        } => {
             let current_dir = std::env::current_dir()?;
             init::handle_init(&current_dir, force)?;
+
+            // If --encrypt flag is set, also enable encryption
+            if enable_encrypt {
+                if let Err(e) = encrypt::enable_encryption(&current_dir) {
+                    eprintln!("Warning: Failed to enable encryption: {}", e);
+                }
+            }
         }
         Commands::Shell {
             environment,
@@ -59,12 +69,9 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Commands::Show {
-            environment,
-            values,
-        } => {
+        Commands::Inspect { environment } => {
             let current_dir = std::env::current_dir()?;
-            match show::show_environment(&current_dir, &environment, values) {
+            match show::show_environment(&current_dir, &environment, false) {
                 Ok(output) => {
                     println!("{}", output);
                 }
@@ -74,16 +81,49 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Commands::Set { name, value } => {
-            println!(
-                "Set command called with name: {} and value: {}",
-                name, value
-            );
-            std::process::exit(1); // Temporary - will implement properly
+        Commands::Set {
+            environment,
+            key,
+            value,
+            encrypt: should_encrypt,
+        } => {
+            let current_dir = std::env::current_dir()?;
+            match set::set_variable(&current_dir, &environment, &key, value, should_encrypt) {
+                Ok(()) => {}
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
-        Commands::Unset { name } => {
-            println!("Unset command called with name: {}", name);
-            std::process::exit(1); // Temporary - will implement properly
+        Commands::Get { environment, key } => {
+            let current_dir = std::env::current_dir()?;
+            match get::get_variable(&current_dir, &environment, &key) {
+                Ok(value) => {
+                    println!("{}", value);
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Encrypt(subcmd) => {
+            let current_dir = std::env::current_dir()?;
+            match subcmd {
+                EncryptCommands::Enable => {
+                    if let Err(e) = encrypt::enable_encryption(&current_dir) {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+                EncryptCommands::Disable => {
+                    if let Err(e) = encrypt::disable_encryption(&current_dir) {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
         }
         Commands::Validate => {
             validate::handle_validate()?;

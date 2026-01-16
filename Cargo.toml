@@ -1,6 +1,6 @@
 [package]
 name = "stand"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 authors = ["ueneid"]
 description = "A CLI tool for explicit environment variable management"
@@ -29,6 +29,10 @@ colored = "2.0"
 
 # Data structures
 indexmap = { version = "2.0", features = ["serde"] }
+
+# Encryption
+age = { version = "0.10", default-features = false }
+base64 = "0.22"
 
 # System utilities
 dirs = "5.0"
