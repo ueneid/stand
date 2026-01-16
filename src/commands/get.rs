@@ -147,4 +147,41 @@ description = "Development"
             Err(GetCommandError::EnvironmentNotFound(_))
         ));
     }
+
+    #[test]
+    fn test_get_variable_encrypted() {
+        let dir = tempdir().unwrap();
+
+        // Generate keys and save
+        let key_pair = crate::crypto::keys::generate_key_pair();
+        let keys_path = dir.path().join(".stand.keys");
+        crate::crypto::keys::save_private_key(&keys_path, &key_pair.private_key).unwrap();
+
+        // Encrypt a value
+        let recipient = key_pair.to_recipient().unwrap();
+        let encrypted = crate::crypto::encrypt_value("secret-api-key", &recipient).unwrap();
+
+        // Write config with encrypted value
+        let config_path = dir.path().join(".stand.toml");
+        fs::write(
+            &config_path,
+            format!(
+                r#"version = "1.0"
+
+[encryption]
+public_key = "{}"
+
+[environments.dev]
+description = "Development"
+API_KEY = "{}"
+"#,
+                key_pair.public_key, encrypted
+            ),
+        )
+        .unwrap();
+
+        let result = get_variable(dir.path(), "dev", "API_KEY");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "secret-api-key");
+    }
 }

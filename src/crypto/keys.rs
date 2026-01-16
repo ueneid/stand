@@ -117,6 +117,7 @@ pub fn parse_private_key(private_key: &str) -> Result<Identity, CryptoError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use tempfile::tempdir;
 
     #[test]
@@ -177,5 +178,42 @@ mod tests {
         let result = parse_private_key("invalid-key");
         assert!(result.is_err());
         assert!(matches!(result, Err(CryptoError::InvalidPrivateKey(_))));
+    }
+
+    #[test]
+    #[serial]
+    fn test_load_private_key_from_env() {
+        let key_pair = generate_key_pair();
+        std::env::set_var("STAND_PRIVATE_KEY", &key_pair.private_key);
+
+        let result = load_private_key_from_env();
+        assert_eq!(result, Some(key_pair.private_key));
+
+        std::env::remove_var("STAND_PRIVATE_KEY");
+    }
+
+    #[test]
+    #[serial]
+    fn test_load_private_key_from_env_not_set() {
+        std::env::remove_var("STAND_PRIVATE_KEY");
+
+        let result = load_private_key_from_env();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_save_private_key_sets_secure_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().unwrap();
+        let key_file = dir.path().join(".stand.keys");
+        let key_pair = generate_key_pair();
+
+        save_private_key(&key_file, &key_pair.private_key).unwrap();
+
+        let metadata = std::fs::metadata(&key_file).unwrap();
+        let mode = metadata.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "File should have 0600 permissions");
     }
 }

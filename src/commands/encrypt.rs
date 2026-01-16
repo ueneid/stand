@@ -49,7 +49,7 @@ pub fn enable_encryption(project_dir: &Path) -> Result<(), EncryptionCommandErro
         "✓".green(),
         CONFIG_FILE
     );
-    println!("{} Created {} (add to .gitignore)", "✓".green(), KEYS_FILE);
+    println!("{} Created {}", "✓".green(), KEYS_FILE);
 
     Ok(())
 }

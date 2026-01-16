@@ -57,14 +57,14 @@ pub fn set_variable(
 
     if encrypt {
         println!(
-            "{} Set {} in [environments.{}.variables] (encrypted)",
+            "{} Set {} in [environments.{}] (encrypted)",
             "✓".green(),
             key,
             environment
         );
     } else {
         println!(
-            "{} Set {} in [environments.{}.variables]",
+            "{} Set {} in [environments.{}]",
             "✓".green(),
             key,
             environment
@@ -247,5 +247,49 @@ description = "Development"
             true,
         );
         assert!(matches!(result, Err(SetCommandError::EncryptionNotEnabled)));
+    }
+
+    #[test]
+    fn test_set_variable_encrypted_success() {
+        let dir = tempdir().unwrap();
+        let key_pair = crate::crypto::keys::generate_key_pair();
+
+        let config_path = dir.path().join(".stand.toml");
+        fs::write(
+            &config_path,
+            format!(
+                r#"version = "1.0"
+
+[encryption]
+public_key = "{}"
+
+[environments.dev]
+description = "Development"
+"#,
+                key_pair.public_key
+            ),
+        )
+        .unwrap();
+
+        let result = set_variable(
+            dir.path(),
+            "dev",
+            "API_KEY",
+            Some("secret-value".to_string()),
+            true,
+        );
+        assert!(result.is_ok());
+
+        // Verify the value was encrypted
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(
+            content.contains("encrypted:"),
+            "Value should be encrypted in config file"
+        );
+        // The plain value should NOT appear in the file
+        assert!(
+            !content.contains("secret-value"),
+            "Plain value should not appear in config file"
+        );
     }
 }
