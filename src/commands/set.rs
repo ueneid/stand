@@ -136,9 +136,6 @@ fn update_toml_variable(
 /// Error type for set command.
 #[derive(Debug, thiserror::Error)]
 pub enum SetCommandError {
-    #[error("Configuration file not found")]
-    ConfigNotFound,
-
     #[error("Environment not found: {0}")]
     EnvironmentNotFound(String),
 

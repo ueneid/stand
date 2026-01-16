@@ -52,23 +52,23 @@ fn load_private_key(project_dir: &Path) -> Result<String, GetCommandError> {
 
     // Then try .stand.keys file
     let keys_path = project_dir.join(".stand.keys");
-    crate::crypto::keys::load_private_key(&keys_path).map_err(|_| GetCommandError::NoPrivateKey)
+    crate::crypto::keys::load_private_key(&keys_path)
+        .map_err(|e| GetCommandError::PrivateKeyLoadFailed(e.to_string()))
 }
 
 /// Error type for get command.
 #[derive(Debug, thiserror::Error)]
 pub enum GetCommandError {
-    #[error("Configuration file not found")]
-    ConfigNotFound,
-
     #[error("Environment not found: {0}")]
     EnvironmentNotFound(String),
 
     #[error("Variable not found: {0}")]
     VariableNotFound(String),
 
-    #[error("Private key not found. Set STAND_PRIVATE_KEY or ensure .stand.keys exists.")]
-    NoPrivateKey,
+    #[error(
+        "Failed to load private key: {0}. Set STAND_PRIVATE_KEY or ensure .stand.keys exists."
+    )]
+    PrivateKeyLoadFailed(String),
 
     #[error("Cryptographic error: {0}")]
     Crypto(String),

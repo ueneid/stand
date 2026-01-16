@@ -192,7 +192,7 @@ fn load_private_key_for_decryption(project_dir: &Path) -> Result<String, Encrypt
     // Then try .stand.keys file
     let keys_path = project_dir.join(KEYS_FILE);
     crate::crypto::keys::load_private_key(&keys_path)
-        .map_err(|_| EncryptionCommandError::NoPrivateKey)
+        .map_err(|e| EncryptionCommandError::PrivateKeyLoadFailed(e.to_string()))
 }
 
 /// Error type for encryption commands.
@@ -207,8 +207,10 @@ pub enum EncryptionCommandError {
     #[error("Encryption is not enabled for this project")]
     NotEnabled,
 
-    #[error("Private key not found. Set STAND_PRIVATE_KEY or ensure .stand.keys exists.")]
-    NoPrivateKey,
+    #[error(
+        "Failed to load private key: {0}. Set STAND_PRIVATE_KEY or ensure .stand.keys exists."
+    )]
+    PrivateKeyLoadFailed(String),
 
     #[error("Cryptographic error: {0}")]
     Crypto(#[from] CryptoError),
