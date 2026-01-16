@@ -176,13 +176,7 @@ pub fn show_env(project_path: &Path, options: EnvOptions) -> Result<String> {
     let user_vars = if options.stand_only {
         HashMap::new()
     } else {
-        match get_user_variables(project_path, &env_name) {
-            Ok(vars) => vars,
-            Err(e) => {
-                eprintln!("Warning: Could not load user-defined variables: {}", e);
-                HashMap::new()
-            }
-        }
+        get_user_variables(project_path, &env_name)?
     };
 
     // Format output

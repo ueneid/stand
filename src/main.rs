@@ -16,7 +16,8 @@ fn main() -> anyhow::Result<()> {
             // If --encrypt flag is set, also enable encryption
             if enable_encrypt {
                 if let Err(e) = encrypt::enable_encryption(&current_dir) {
-                    eprintln!("Warning: Failed to enable encryption: {}", e);
+                    eprintln!("Error: Failed to enable encryption: {}", e);
+                    std::process::exit(1);
                 }
             }
         }
