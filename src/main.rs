@@ -69,9 +69,12 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Commands::Inspect { environment } => {
+        Commands::Inspect {
+            environment,
+            values,
+        } => {
             let current_dir = std::env::current_dir()?;
-            match show::show_environment(&current_dir, &environment, false) {
+            match show::show_environment(&current_dir, &environment, values) {
                 Ok(output) => {
                     println!("{}", output);
                 }

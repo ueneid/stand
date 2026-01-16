@@ -48,6 +48,9 @@ pub enum Commands {
     Inspect {
         /// Environment name
         environment: String,
+        /// Show actual values (default: show names only)
+        #[arg(short, long)]
+        values: bool,
     },
     /// Set a variable in the configuration file
     Set {

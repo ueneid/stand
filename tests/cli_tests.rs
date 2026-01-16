@@ -150,7 +150,7 @@ fn test_cli_list_command_no_config() {
 }
 
 #[test]
-fn test_cli_show_command_with_config() {
+fn test_cli_inspect_command_with_config() {
     let dir = tempdir().unwrap();
     let config_content = r#"
 version = "2.0"
@@ -171,7 +171,7 @@ DEBUG = "true"
 
     let mut cmd = Command::cargo_bin("stand").unwrap();
     cmd.current_dir(dir.path())
-        .args(&["show", "dev"])
+        .args(&["inspect", "dev"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Environment: dev"))
@@ -182,7 +182,7 @@ DEBUG = "true"
 }
 
 #[test]
-fn test_cli_show_command_with_values() {
+fn test_cli_inspect_command_with_values() {
     let dir = tempdir().unwrap();
     let config_content = r#"
 version = "2.0"
@@ -201,7 +201,7 @@ DATABASE_URL = "postgres://localhost:5432/dev"
 
     let mut cmd = Command::cargo_bin("stand").unwrap();
     cmd.current_dir(dir.path())
-        .args(&["show", "dev", "--values"])
+        .args(&["inspect", "dev", "--values"])
         .assert()
         .success()
         .stdout(predicate::str::contains("APP_NAME=MyApp (from common)"))
@@ -211,7 +211,7 @@ DATABASE_URL = "postgres://localhost:5432/dev"
 }
 
 #[test]
-fn test_cli_show_command_nonexistent_env() {
+fn test_cli_inspect_command_nonexistent_env() {
     let dir = tempdir().unwrap();
     let config_content = r#"
 version = "2.0"
@@ -226,7 +226,7 @@ description = "Development environment"
 
     let mut cmd = Command::cargo_bin("stand").unwrap();
     cmd.current_dir(dir.path())
-        .args(&["show", "nonexistent"])
+        .args(&["inspect", "nonexistent"])
         .assert()
         .failure()
         .stderr(predicate::str::contains(
