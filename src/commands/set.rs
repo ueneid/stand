@@ -3,7 +3,7 @@
 //! Sets a variable in the configuration file, optionally encrypting the value.
 
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::Path;
 
 use colored::Colorize;
@@ -74,15 +74,13 @@ pub fn set_variable(
     Ok(())
 }
 
-/// Prompts for a secret value without echoing.
+/// Prompts for a secret value without echoing to the terminal.
+///
+/// Uses rpassword to suppress input echo, preventing sensitive values
+/// from being visible on screen.
 fn prompt_for_secret(key: &str) -> Result<String, SetCommandError> {
-    print!("Enter value for {}: ", key);
-    io::stdout().flush()?;
-
-    // Read line (in a real implementation, we'd use rpassword for no-echo input)
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    Ok(input.trim().to_string())
+    let prompt = format!("Enter value for {}: ", key);
+    rpassword::prompt_password(prompt).map_err(SetCommandError::Io)
 }
 
 /// Get the public key from the configuration.

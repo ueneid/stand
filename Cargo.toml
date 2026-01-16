@@ -26,6 +26,7 @@ thiserror = "1.0"
 
 # Terminal and output
 colored = "2.0"
+rpassword = "7.3"
 
 # Data structures
 indexmap = { version = "2.0", features = ["serde"] }

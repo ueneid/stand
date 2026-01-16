@@ -93,31 +93,40 @@ pub fn disable_encryption(project_dir: &Path) -> Result<(), EncryptionCommandErr
         .map_err(EncryptionCommandError::Crypto)?;
 
     // Find and decrypt all encrypted values
-    let mut updated_config = config_content.clone();
+    // We collect all encrypted values first, then replace them to avoid
+    // issues with string indices changing during replacement.
     let mut decrypted_count = 0;
+    let mut replacements: Vec<(String, String)> = Vec::new();
 
-    // Simple regex-like search for encrypted values
-    while let Some(start) = updated_config.find("\"encrypted:") {
+    // Find all encrypted values in the config
+    let mut search_pos = 0;
+    while let Some(relative_start) = config_content[search_pos..].find("\"encrypted:") {
+        let start = search_pos + relative_start;
         let value_start = start + 1; // Skip the opening quote
-        if let Some(end) = updated_config[value_start..].find('"') {
-            let encrypted_value = &updated_config[value_start..value_start + end];
+        if let Some(end) = config_content[value_start..].find('"') {
+            let encrypted_value = &config_content[value_start..value_start + end];
             match crate::crypto::decrypt_value(encrypted_value, &identity) {
                 Ok(decrypted) => {
-                    updated_config = format!(
-                        "{}\"{}\"{}",
-                        &updated_config[..value_start],
-                        decrypted,
-                        &updated_config[value_start + end..]
-                    );
+                    replacements.push((encrypted_value.to_string(), decrypted));
                     decrypted_count += 1;
                 }
                 Err(e) => {
                     return Err(EncryptionCommandError::Crypto(e));
                 }
             }
+            // Move past this encrypted value to find the next one
+            search_pos = value_start + end + 1;
         } else {
             break;
         }
+    }
+
+    // Apply all replacements to the config
+    let mut updated_config = config_content.clone();
+    for (encrypted, decrypted) in replacements {
+        // Replace the encrypted value with the decrypted value (including quotes)
+        updated_config =
+            updated_config.replace(&format!("\"{}\"", encrypted), &format!("\"{}\"", decrypted));
     }
 
     // Remove [encryption] section

@@ -17,9 +17,12 @@ pub fn is_encrypted(value: &str) -> bool {
 /// Encrypts a plaintext value with the given public key.
 ///
 /// Returns the encrypted value with the "encrypted:" prefix.
+///
+/// # Errors
+/// Returns `CryptoError::EncryptionFailed` if encryption fails.
 pub fn encrypt_value(plaintext: &str, recipient: &Recipient) -> Result<String, CryptoError> {
     let encryptor = age::Encryptor::with_recipients(vec![Box::new(recipient.clone())])
-        .expect("Failed to create encryptor");
+        .ok_or_else(|| CryptoError::EncryptionFailed("Failed to create encryptor".to_string()))?;
 
     let mut encrypted = vec![];
     let mut writer = encryptor
