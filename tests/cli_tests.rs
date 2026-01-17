@@ -150,7 +150,7 @@ fn test_cli_list_command_no_config() {
 }
 
 #[test]
-fn test_cli_show_command_with_config() {
+fn test_cli_inspect_command_with_config() {
     let dir = tempdir().unwrap();
     let config_content = r#"
 version = "2.0"
@@ -171,7 +171,7 @@ DEBUG = "true"
 
     let mut cmd = Command::cargo_bin("stand").unwrap();
     cmd.current_dir(dir.path())
-        .args(&["show", "dev"])
+        .args(&["inspect", "dev"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Environment: dev"))
@@ -182,7 +182,7 @@ DEBUG = "true"
 }
 
 #[test]
-fn test_cli_show_command_with_values() {
+fn test_cli_inspect_command_with_values() {
     let dir = tempdir().unwrap();
     let config_content = r#"
 version = "2.0"
@@ -201,7 +201,7 @@ DATABASE_URL = "postgres://localhost:5432/dev"
 
     let mut cmd = Command::cargo_bin("stand").unwrap();
     cmd.current_dir(dir.path())
-        .args(&["show", "dev", "--values"])
+        .args(&["inspect", "dev", "--values"])
         .assert()
         .success()
         .stdout(predicate::str::contains("APP_NAME=MyApp (from common)"))
@@ -211,7 +211,7 @@ DATABASE_URL = "postgres://localhost:5432/dev"
 }
 
 #[test]
-fn test_cli_show_command_nonexistent_env() {
+fn test_cli_inspect_command_nonexistent_env() {
     let dir = tempdir().unwrap();
     let config_content = r#"
 version = "2.0"
@@ -226,7 +226,7 @@ description = "Development environment"
 
     let mut cmd = Command::cargo_bin("stand").unwrap();
     cmd.current_dir(dir.path())
-        .args(&["show", "nonexistent"])
+        .args(&["inspect", "nonexistent"])
         .assert()
         .failure()
         .stderr(predicate::str::contains(
@@ -254,4 +254,156 @@ fn test_cli_env_command_options_conflict() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("cannot be used with"));
+}
+
+// === Encryption Integration Tests ===
+
+#[test]
+fn test_cli_encrypt_enable_creates_keys() {
+    let dir = tempdir().unwrap();
+
+    // First initialize the project
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path()).arg("init").assert().success();
+
+    // Enable encryption
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path())
+        .args(&["encrypt", "enable"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Generated key pair"))
+        .stdout(predicate::str::contains("Added [encryption] section"));
+
+    // Verify .stand.keys was created
+    let keys_path = dir.path().join(".stand.keys");
+    assert!(keys_path.exists());
+
+    // Verify [encryption] section was added to config
+    let config_content = fs::read_to_string(dir.path().join(".stand.toml")).unwrap();
+    assert!(config_content.contains("[encryption]"));
+    assert!(config_content.contains("public_key = \"age1"));
+}
+
+#[test]
+fn test_cli_encrypt_enable_already_enabled() {
+    let dir = tempdir().unwrap();
+
+    // Initialize and enable encryption
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path()).arg("init").assert().success();
+
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path())
+        .args(&["encrypt", "enable"])
+        .assert()
+        .success();
+
+    // Try to enable again - should fail
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path())
+        .args(&["encrypt", "enable"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already enabled"));
+}
+
+#[test]
+fn test_cli_init_with_encrypt_flag() {
+    let dir = tempdir().unwrap();
+
+    // Initialize with --encrypt flag
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path())
+        .args(&["init", "--encrypt"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Created .stand.toml"))
+        .stdout(predicate::str::contains("Generated key pair"));
+
+    // Verify both config and keys were created
+    assert!(dir.path().join(".stand.toml").exists());
+    assert!(dir.path().join(".stand.keys").exists());
+
+    // Verify encryption section in config
+    let config_content = fs::read_to_string(dir.path().join(".stand.toml")).unwrap();
+    assert!(config_content.contains("[encryption]"));
+}
+
+#[test]
+fn test_cli_set_and_get_encrypted_value() {
+    let dir = tempdir().unwrap();
+
+    // Initialize with encryption
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path())
+        .args(&["init", "--encrypt"])
+        .assert()
+        .success();
+
+    // Set an encrypted value
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path())
+        .args(&["set", "dev", "API_KEY", "secret-value-123", "--encrypt"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(encrypted)"));
+
+    // Verify the value is encrypted in the config file
+    let config_content = fs::read_to_string(dir.path().join(".stand.toml")).unwrap();
+    assert!(config_content.contains("API_KEY = \"encrypted:"));
+    assert!(!config_content.contains("secret-value-123")); // Plain value should NOT appear
+
+    // Get the value - should be decrypted
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path())
+        .args(&["get", "dev", "API_KEY"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("secret-value-123"));
+}
+
+#[test]
+fn test_cli_inspect_shows_encrypted_marker() {
+    let dir = tempdir().unwrap();
+
+    // Initialize with encryption
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path())
+        .args(&["init", "--encrypt"])
+        .assert()
+        .success();
+
+    // Set an encrypted value
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path())
+        .args(&["set", "dev", "SECRET", "my-secret", "--encrypt"])
+        .assert()
+        .success();
+
+    // Inspect should show [ENCRYPTED] marker
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path())
+        .args(&["inspect", "dev", "--values"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[ENCRYPTED]"))
+        .stdout(predicate::str::contains("SECRET"));
+}
+
+#[test]
+fn test_cli_set_encrypted_without_encryption_enabled() {
+    let dir = tempdir().unwrap();
+
+    // Initialize WITHOUT encryption
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path()).arg("init").assert().success();
+
+    // Try to set encrypted value - should fail
+    let mut cmd = Command::cargo_bin("stand").unwrap();
+    cmd.current_dir(dir.path())
+        .args(&["set", "dev", "API_KEY", "secret", "--encrypt"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Encryption is not enabled"));
 }

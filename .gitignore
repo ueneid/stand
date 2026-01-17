@@ -2,3 +2,5 @@
 .serena/
 .stand/state.json
 .stand.toml
+
+.stand.keys

@@ -42,6 +42,7 @@
 pub mod cli;
 pub mod commands;
 pub mod config;
+pub mod crypto;
 pub mod environment;
 pub mod error;
 pub mod process;

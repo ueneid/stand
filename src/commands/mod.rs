@@ -1,10 +1,11 @@
 pub mod current;
+pub mod encrypt;
 pub mod env;
 pub mod exec;
+pub mod get;
 pub mod init;
 pub mod list;
 pub mod set;
 pub mod shell;
 pub mod show;
-pub mod unset;
 pub mod validate;

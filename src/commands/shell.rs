@@ -4,6 +4,7 @@
 
 use crate::config::loader;
 use crate::config::types::NestedBehavior;
+use crate::crypto::decrypt_variables;
 use crate::shell::{
     build_shell_environment, detect_user_shell, get_active_environment, is_stand_shell_active,
     spawn_shell,
@@ -129,12 +130,16 @@ pub fn validate_shell_environment(
     // Get shell path (use override if provided, otherwise detect from $SHELL)
     let shell_path = shell_override.unwrap_or_else(detect_user_shell);
 
+    // Decrypt any encrypted variables
+    let decrypted_vars = decrypt_variables(env.variables.clone(), project_path)
+        .map_err(|e| anyhow!("Failed to decrypt variables: {}", e))?;
+
     // Build environment with Stand markers
     let project_root = project_path
         .to_str()
         .ok_or_else(|| anyhow!("Invalid project path"))?;
     let mut shell_env =
-        build_shell_environment(env.variables.clone(), env_name, project_root, &shell_path);
+        build_shell_environment(decrypted_vars, env_name, project_root, &shell_path);
 
     // Add environment color for prompt customization
     if let Some(ref color) = env.color {
