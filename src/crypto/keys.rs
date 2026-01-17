@@ -58,6 +58,7 @@ pub fn generate_key_pair() -> KeyPair {
 /// Saves the private key to a file.
 ///
 /// The file is created with restricted permissions (0600 on Unix).
+/// On non-Unix platforms, the file is created with default permissions.
 pub fn save_private_key(path: &Path, private_key: &str) -> Result<(), CryptoError> {
     let content = format!(
         "# Stand encryption keys - DO NOT COMMIT TO VERSION CONTROL\n\
@@ -67,28 +68,42 @@ pub fn save_private_key(path: &Path, private_key: &str) -> Result<(), CryptoErro
         private_key
     );
 
-    let mut file = fs::File::create(path)?;
-    file.write_all(content.as_bytes())?;
-
-    // Set file permissions to 0600 on Unix
+    // On Unix, create file with 0600 permissions atomically to prevent race conditions
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let permissions = fs::Permissions::from_mode(0o600);
-        fs::set_permissions(path, permissions)?;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(content.as_bytes())?;
+    }
+
+    // On non-Unix platforms, create file with default permissions
+    #[cfg(not(unix))]
+    {
+        let mut file = fs::File::create(path)?;
+        file.write_all(content.as_bytes())?;
     }
 
     Ok(())
 }
 
 /// Loads the private key from a file.
+///
+/// # Errors
+/// Returns `CryptoError::IoError` if the file cannot be read.
+/// Returns `CryptoError::NoPrivateKey` if the file does not contain a `STAND_PRIVATE_KEY=` line.
 pub fn load_private_key(path: &Path) -> Result<String, CryptoError> {
     let content = fs::read_to_string(path)?;
 
     for line in content.lines() {
         let line = line.trim();
-        if line.starts_with("STAND_PRIVATE_KEY=") {
-            return Ok(line.strip_prefix("STAND_PRIVATE_KEY=").unwrap().to_string());
+        // Use pattern matching instead of unwrap for safety
+        if let Some(key) = line.strip_prefix("STAND_PRIVATE_KEY=") {
+            return Ok(key.to_string());
         }
     }
 
@@ -96,8 +111,19 @@ pub fn load_private_key(path: &Path) -> Result<String, CryptoError> {
 }
 
 /// Loads the private key from an environment variable.
-pub fn load_private_key_from_env() -> Option<String> {
-    std::env::var("STAND_PRIVATE_KEY").ok()
+///
+/// # Returns
+/// - `Ok(Some(key))` if the environment variable is set and valid UTF-8
+/// - `Ok(None)` if the environment variable is not set
+/// - `Err(CryptoError::InvalidPrivateKey)` if the environment variable contains invalid UTF-8
+pub fn load_private_key_from_env() -> Result<Option<String>, CryptoError> {
+    match std::env::var("STAND_PRIVATE_KEY") {
+        Ok(key) => Ok(Some(key)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => Err(CryptoError::InvalidPrivateKey(
+            "STAND_PRIVATE_KEY environment variable contains invalid UTF-8".to_string(),
+        )),
+    }
 }
 
 /// Parses a public key string into an age Recipient.
@@ -187,7 +213,8 @@ mod tests {
         std::env::set_var("STAND_PRIVATE_KEY", &key_pair.private_key);
 
         let result = load_private_key_from_env();
-        assert_eq!(result, Some(key_pair.private_key));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Some(key_pair.private_key));
 
         std::env::remove_var("STAND_PRIVATE_KEY");
     }
@@ -198,7 +225,8 @@ mod tests {
         std::env::remove_var("STAND_PRIVATE_KEY");
 
         let result = load_private_key_from_env();
-        assert!(result.is_none());
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
     }
 
     #[test]

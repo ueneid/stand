@@ -9,7 +9,7 @@ use std::path::Path;
 use colored::Colorize;
 
 use crate::config::{loader, ConfigError};
-use crate::crypto::encrypt_value;
+use crate::crypto::{encrypt_value, CryptoError};
 
 /// Set a variable in the configuration file.
 ///
@@ -44,10 +44,8 @@ pub fn set_variable(
     let final_value = if encrypt {
         // Check if encryption is enabled
         let public_key = get_public_key(&config_path)?;
-        let recipient = crate::crypto::keys::parse_public_key(&public_key)
-            .map_err(|e| SetCommandError::Crypto(e.to_string()))?;
-        encrypt_value(&plain_value, &recipient)
-            .map_err(|e| SetCommandError::Crypto(e.to_string()))?
+        let recipient = crate::crypto::keys::parse_public_key(&public_key)?;
+        encrypt_value(&plain_value, &recipient)?
     } else {
         plain_value
     };
@@ -146,7 +144,7 @@ pub enum SetCommandError {
     EncryptionNotEnabled,
 
     #[error("Cryptographic error: {0}")]
-    Crypto(String),
+    Crypto(#[from] CryptoError),
 
     #[error("Configuration error: {0}")]
     Config(#[from] ConfigError),

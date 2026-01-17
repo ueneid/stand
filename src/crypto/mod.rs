@@ -28,6 +28,9 @@ pub enum CryptoError {
     #[error("Failed to decrypt value: {0}")]
     DecryptionFailed(String),
 
+    #[error("Failed to decrypt variable '{variable}': {reason}")]
+    DecryptionFailedForVariable { variable: String, reason: String },
+
     #[error("Invalid public key format: {0}")]
     InvalidPublicKey(String),
 
@@ -78,7 +81,12 @@ pub fn decrypt_variables(
     let mut result = HashMap::new();
     for (key, value) in variables {
         if is_encrypted(&value) {
-            let decrypted = decrypt_value(&value, &identity)?;
+            let decrypted = decrypt_value(&value, &identity).map_err(|e| {
+                CryptoError::DecryptionFailedForVariable {
+                    variable: key.clone(),
+                    reason: e.to_string(),
+                }
+            })?;
             result.insert(key, decrypted);
         } else {
             result.insert(key, value);
@@ -90,9 +98,11 @@ pub fn decrypt_variables(
 
 /// Load private key from environment variable or file.
 fn load_private_key_for_decryption(project_dir: &Path) -> Result<String, CryptoError> {
-    // First try environment variable
-    if let Some(key) = keys::load_private_key_from_env() {
-        return Ok(key);
+    // First try environment variable (may error on invalid UTF-8)
+    match keys::load_private_key_from_env() {
+        Ok(Some(key)) => return Ok(key),
+        Ok(None) => {} // Not set, try file
+        Err(e) => return Err(e),
     }
 
     // Then try .stand.keys file

@@ -1487,6 +1487,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml 0.8.23",
+ "toml_edit",
  "which",
 ]
 
