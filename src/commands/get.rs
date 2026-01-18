@@ -10,13 +10,14 @@ use crate::crypto::{decrypt_value, is_encrypted, CryptoError};
 /// Get a variable value from the configuration.
 ///
 /// If the value is encrypted and a private key is available, it will be decrypted.
+/// This function resolves inheritance (extends) and common variables.
 pub fn get_variable(
     project_dir: &Path,
     environment: &str,
     key: &str,
 ) -> Result<String, GetCommandError> {
-    // Load configuration
-    let config = loader::load_config_toml(project_dir)?;
+    // Load configuration with inheritance applied (common + extends)
+    let config = loader::load_config_toml_with_inheritance(project_dir)?;
 
     // Find the environment
     let env = config
@@ -177,5 +178,74 @@ API_KEY = "{}"
         let result = get_variable(dir.path(), "dev", "API_KEY");
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "secret-api-key");
+    }
+
+    #[test]
+    fn test_get_variable_from_common_section() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join(".stand.toml");
+
+        fs::write(
+            &config_path,
+            r#"version = "1.0"
+
+[common]
+SHARED_VALUE = "common-value"
+
+[environments.dev]
+description = "Development"
+LOCAL_VALUE = "local-value"
+"#,
+        )
+        .unwrap();
+
+        // Should be able to get common variable
+        let result = get_variable(dir.path(), "dev", "SHARED_VALUE");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "common-value");
+
+        // Should also get local variable
+        let result = get_variable(dir.path(), "dev", "LOCAL_VALUE");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "local-value");
+    }
+
+    #[test]
+    fn test_get_variable_from_extended_environment() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join(".stand.toml");
+
+        fs::write(
+            &config_path,
+            r#"version = "1.0"
+
+[environments.base]
+description = "Base environment"
+BASE_URL = "https://base.example.com"
+OVERRIDE_ME = "base-value"
+
+[environments.dev]
+description = "Development"
+extends = "base"
+OVERRIDE_ME = "dev-value"
+DEV_ONLY = "dev-only-value"
+"#,
+        )
+        .unwrap();
+
+        // Should get inherited variable from base
+        let result = get_variable(dir.path(), "dev", "BASE_URL");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "https://base.example.com");
+
+        // Should get overridden value from dev (not base)
+        let result = get_variable(dir.path(), "dev", "OVERRIDE_ME");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "dev-value");
+
+        // Should get dev-only variable
+        let result = get_variable(dir.path(), "dev", "DEV_ONLY");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "dev-only-value");
     }
 }

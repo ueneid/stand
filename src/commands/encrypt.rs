@@ -129,6 +129,7 @@ pub struct DisableEncryptionResult {
 /// Internal function to disable encryption without user confirmation.
 ///
 /// This function is separated to allow testing without interactive prompts.
+/// If no encrypted values exist, the private key is not required.
 pub fn disable_encryption_internal(
     project_dir: &Path,
 ) -> Result<DisableEncryptionResult, EncryptionCommandError> {
@@ -146,51 +147,56 @@ pub fn disable_encryption_internal(
         return Err(EncryptionCommandError::NotEnabled);
     }
 
-    // Load private key
-    let private_key = load_private_key_for_decryption(project_dir)?;
-    let identity = crate::crypto::keys::parse_private_key(&private_key)
-        .map_err(EncryptionCommandError::Crypto)?;
+    // First, check if there are any encrypted values (read-only scan)
+    let has_encrypted_values = has_encrypted_values_in_doc(&doc);
 
     let mut result = DisableEncryptionResult::default();
 
-    // Find and decrypt all encrypted values in environments section
-    if let Some(environments) = doc.get_mut("environments") {
-        if let Some(env_table) = environments.as_table_mut() {
-            for (_env_name, env_config) in env_table.iter_mut() {
-                if let Some(env_tbl) = env_config.as_table_mut() {
-                    for (key, value) in env_tbl.iter_mut() {
-                        if let Some(val_str) = value.as_str() {
-                            if val_str.starts_with(ENCRYPTED_PREFIX) {
-                                let decrypted = crate::crypto::decrypt_value(val_str, &identity)
+    // Only load private key if there are encrypted values to decrypt
+    if has_encrypted_values {
+        let private_key = load_private_key_for_decryption(project_dir)?;
+        let identity = crate::crypto::keys::parse_private_key(&private_key)
+            .map_err(EncryptionCommandError::Crypto)?;
+
+        // Decrypt all encrypted values in environments section
+        if let Some(environments) = doc.get_mut("environments") {
+            if let Some(env_table) = environments.as_table_mut() {
+                for (_env_name, env_config) in env_table.iter_mut() {
+                    if let Some(env_tbl) = env_config.as_table_mut() {
+                        for (key, value) in env_tbl.iter_mut() {
+                            if let Some(val_str) = value.as_str() {
+                                if val_str.starts_with(ENCRYPTED_PREFIX) {
+                                    let decrypted = crate::crypto::decrypt_value(
+                                        val_str, &identity,
+                                    )
                                     .map_err(|e| EncryptionCommandError::DecryptionFailed {
                                         variable: key.to_string(),
                                         reason: e.to_string(),
                                     })?;
-                                *value = Item::Value(Value::from(decrypted));
-                                result.decrypted_count += 1;
+                                    *value = Item::Value(Value::from(decrypted));
+                                    result.decrypted_count += 1;
+                                }
                             }
                         }
                     }
                 }
             }
         }
-    }
 
-    // Also check [common] section for encrypted values
-    if let Some(common) = doc.get_mut("common") {
-        if let Some(common_table) = common.as_table_mut() {
-            for (key, value) in common_table.iter_mut() {
-                if let Some(val_str) = value.as_str() {
-                    if val_str.starts_with(ENCRYPTED_PREFIX) {
-                        let decrypted =
-                            crate::crypto::decrypt_value(val_str, &identity).map_err(|e| {
-                                EncryptionCommandError::DecryptionFailed {
+        // Also decrypt [common] section
+        if let Some(common) = doc.get_mut("common") {
+            if let Some(common_table) = common.as_table_mut() {
+                for (key, value) in common_table.iter_mut() {
+                    if let Some(val_str) = value.as_str() {
+                        if val_str.starts_with(ENCRYPTED_PREFIX) {
+                            let decrypted = crate::crypto::decrypt_value(val_str, &identity)
+                                .map_err(|e| EncryptionCommandError::DecryptionFailed {
                                     variable: key.to_string(),
                                     reason: e.to_string(),
-                                }
-                            })?;
-                        *value = Item::Value(Value::from(decrypted));
-                        result.decrypted_count += 1;
+                                })?;
+                            *value = Item::Value(Value::from(decrypted));
+                            result.decrypted_count += 1;
+                        }
                     }
                 }
             }
@@ -209,6 +215,41 @@ pub fn disable_encryption_internal(
     }
 
     Ok(result)
+}
+
+/// Check if the document contains any encrypted values.
+fn has_encrypted_values_in_doc(doc: &DocumentMut) -> bool {
+    // Check environments section
+    if let Some(environments) = doc.get("environments") {
+        if let Some(env_table) = environments.as_table() {
+            for (_env_name, env_config) in env_table.iter() {
+                if let Some(env_tbl) = env_config.as_table() {
+                    for (_key, value) in env_tbl.iter() {
+                        if let Some(val_str) = value.as_str() {
+                            if val_str.starts_with(ENCRYPTED_PREFIX) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Check common section
+    if let Some(common) = doc.get("common") {
+        if let Some(common_table) = common.as_table() {
+            for (_key, value) in common_table.iter() {
+                if let Some(val_str) = value.as_str() {
+                    if val_str.starts_with(ENCRYPTED_PREFIX) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    false
 }
 
 /// Adds a file to .gitignore if not already present.
@@ -611,5 +652,39 @@ MALFORMED_SECRET = "encrypted:this-is-not-valid-ciphertext"
 
         // Verify .stand.keys was NOT deleted
         assert!(keys_path.exists());
+    }
+
+    #[test]
+    fn test_disable_encryption_internal_succeeds_without_key_when_no_encrypted_values() {
+        let dir = tempdir().unwrap();
+
+        // Create config with encryption enabled but NO encrypted values and NO .stand.keys
+        let config_path = dir.path().join(".stand.toml");
+        fs::write(
+            &config_path,
+            r#"version = "1.0"
+
+[encryption]
+public_key = "age1somekey"
+
+[environments.dev]
+description = "Development"
+PLAIN_VALUE = "not-encrypted"
+"#,
+        )
+        .unwrap();
+
+        // Note: No .stand.keys file exists, but there are no encrypted values either
+
+        let result = disable_encryption_internal(dir.path());
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        assert_eq!(result.decrypted_count, 0);
+
+        // Verify [encryption] section was removed
+        let updated_config = fs::read_to_string(&config_path).unwrap();
+        assert!(!updated_config.contains("[encryption]"));
+        assert!(updated_config.contains("PLAIN_VALUE = \"not-encrypted\""));
     }
 }
