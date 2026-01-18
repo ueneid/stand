@@ -113,13 +113,6 @@ pub fn disable_encryption(project_dir: &Path) -> Result<(), EncryptionCommandErr
             result.decrypted_count
         );
     }
-    if result.warning_count > 0 {
-        eprintln!(
-            "{} {} potentially malformed encrypted value(s) were skipped",
-            "⚠".yellow(),
-            result.warning_count
-        );
-    }
     println!("{} Removed [encryption] section", "✓".green());
     println!("{} Encryption disabled", "✓".green());
 
@@ -131,8 +124,6 @@ pub fn disable_encryption(project_dir: &Path) -> Result<(), EncryptionCommandErr
 pub struct DisableEncryptionResult {
     /// Number of values successfully decrypted.
     pub decrypted_count: usize,
-    /// Number of potentially malformed values that were skipped.
-    pub warning_count: usize,
 }
 
 /// Internal function to disable encryption without user confirmation.
@@ -170,22 +161,13 @@ pub fn disable_encryption_internal(
                     for (key, value) in env_tbl.iter_mut() {
                         if let Some(val_str) = value.as_str() {
                             if val_str.starts_with(ENCRYPTED_PREFIX) {
-                                match crate::crypto::decrypt_value(val_str, &identity) {
-                                    Ok(decrypted) => {
-                                        *value = Item::Value(Value::from(decrypted));
-                                        result.decrypted_count += 1;
-                                    }
-                                    Err(e) => {
-                                        // Issue 5: Warn about malformed/undecryptable values
-                                        eprintln!(
-                                            "{} Warning: Failed to decrypt '{}': {}",
-                                            "⚠".yellow(),
-                                            key,
-                                            e
-                                        );
-                                        result.warning_count += 1;
-                                    }
-                                }
+                                let decrypted = crate::crypto::decrypt_value(val_str, &identity)
+                                    .map_err(|e| EncryptionCommandError::DecryptionFailed {
+                                        variable: key.to_string(),
+                                        reason: e.to_string(),
+                                    })?;
+                                *value = Item::Value(Value::from(decrypted));
+                                result.decrypted_count += 1;
                             }
                         }
                     }
@@ -200,21 +182,15 @@ pub fn disable_encryption_internal(
             for (key, value) in common_table.iter_mut() {
                 if let Some(val_str) = value.as_str() {
                     if val_str.starts_with(ENCRYPTED_PREFIX) {
-                        match crate::crypto::decrypt_value(val_str, &identity) {
-                            Ok(decrypted) => {
-                                *value = Item::Value(Value::from(decrypted));
-                                result.decrypted_count += 1;
-                            }
-                            Err(e) => {
-                                eprintln!(
-                                    "{} Warning: Failed to decrypt '{}': {}",
-                                    "⚠".yellow(),
-                                    key,
-                                    e
-                                );
-                                result.warning_count += 1;
-                            }
-                        }
+                        let decrypted =
+                            crate::crypto::decrypt_value(val_str, &identity).map_err(|e| {
+                                EncryptionCommandError::DecryptionFailed {
+                                    variable: key.to_string(),
+                                    reason: e.to_string(),
+                                }
+                            })?;
+                        *value = Item::Value(Value::from(decrypted));
+                        result.decrypted_count += 1;
                     }
                 }
             }
@@ -293,6 +269,9 @@ pub enum EncryptionCommandError {
 
     #[error("TOML parsing error: {0}")]
     TomlParse(String),
+
+    #[error("Failed to decrypt variable '{variable}': {reason}. All values must be decryptable to disable encryption.")]
+    DecryptionFailed { variable: String, reason: String },
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -410,7 +389,6 @@ DB_PASSWORD = "{}"
 
         let result = result.unwrap();
         assert_eq!(result.decrypted_count, 2);
-        assert_eq!(result.warning_count, 0);
 
         // Verify the config was updated
         let updated_config = fs::read_to_string(&config_path).unwrap();
@@ -456,7 +434,6 @@ PLAIN_VALUE = "not encrypted"
 
         let result = result.unwrap();
         assert_eq!(result.decrypted_count, 0);
-        assert_eq!(result.warning_count, 0);
 
         // Verify [encryption] section was removed
         let updated_config = fs::read_to_string(&config_path).unwrap();
@@ -594,5 +571,45 @@ description = "Development"
         // Verify the common section was updated
         let updated_config = fs::read_to_string(&config_path).unwrap();
         assert!(updated_config.contains("SHARED_SECRET = \"common-secret\""));
+    }
+
+    #[test]
+    fn test_disable_encryption_internal_fails_on_malformed_value() {
+        let dir = tempdir().unwrap();
+
+        // Generate keys
+        let key_pair = crate::crypto::keys::generate_key_pair();
+        let keys_path = dir.path().join(".stand.keys");
+        crate::crypto::keys::save_private_key(&keys_path, &key_pair.private_key).unwrap();
+
+        // Create config with a malformed encrypted value (not valid ciphertext)
+        let config_path = dir.path().join(".stand.toml");
+        let original_content = format!(
+            r#"version = "1.0"
+
+[encryption]
+public_key = "{}"
+
+[environments.dev]
+description = "Development"
+MALFORMED_SECRET = "encrypted:this-is-not-valid-ciphertext"
+"#,
+            key_pair.public_key
+        );
+        fs::write(&config_path, &original_content).unwrap();
+
+        // Attempt to disable encryption - should fail
+        let result = disable_encryption_internal(dir.path());
+        assert!(matches!(
+            result,
+            Err(EncryptionCommandError::DecryptionFailed { .. })
+        ));
+
+        // Verify the config file was NOT modified (still contains encryption section)
+        let config_after = fs::read_to_string(&config_path).unwrap();
+        assert_eq!(config_after, original_content);
+
+        // Verify .stand.keys was NOT deleted
+        assert!(keys_path.exists());
     }
 }
