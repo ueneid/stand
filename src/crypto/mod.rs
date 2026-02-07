@@ -96,8 +96,11 @@ pub fn decrypt_variables(
     Ok(result)
 }
 
-/// Load private key from environment variable or file.
-fn load_private_key_for_decryption(project_dir: &Path) -> Result<String, CryptoError> {
+/// Load private key from environment variable or .stand.keys file.
+///
+/// Tries `STAND_PRIVATE_KEY` environment variable first, then falls back
+/// to reading from the `.stand.keys` file in the project directory.
+pub fn load_private_key_for_decryption(project_dir: &Path) -> Result<String, CryptoError> {
     // First try environment variable (may error on invalid UTF-8)
     match keys::load_private_key_from_env() {
         Ok(Some(key)) => return Ok(key),

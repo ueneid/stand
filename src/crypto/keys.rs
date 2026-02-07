@@ -12,12 +12,21 @@ use age::x25519::{Identity, Recipient};
 use super::CryptoError;
 
 /// A key pair consisting of a public key (for encryption) and a private key (for decryption).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct KeyPair {
     /// The public key string (age1...)
     pub public_key: String,
     /// The private key string (AGE-SECRET-KEY-1...)
     pub private_key: String,
+}
+
+impl std::fmt::Debug for KeyPair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeyPair")
+            .field("public_key", &self.public_key)
+            .field("private_key", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl KeyPair {
@@ -103,6 +112,11 @@ pub fn load_private_key(path: &Path) -> Result<String, CryptoError> {
         let line = line.trim();
         // Use pattern matching instead of unwrap for safety
         if let Some(key) = line.strip_prefix("STAND_PRIVATE_KEY=") {
+            if key.trim().is_empty() {
+                return Err(CryptoError::InvalidPrivateKey(
+                    "Private key value is empty in .stand.keys file".to_string(),
+                ));
+            }
             return Ok(key.to_string());
         }
     }
@@ -118,6 +132,9 @@ pub fn load_private_key(path: &Path) -> Result<String, CryptoError> {
 /// - `Err(CryptoError::InvalidPrivateKey)` if the environment variable contains invalid UTF-8
 pub fn load_private_key_from_env() -> Result<Option<String>, CryptoError> {
     match std::env::var("STAND_PRIVATE_KEY") {
+        Ok(key) if key.trim().is_empty() => Err(CryptoError::InvalidPrivateKey(
+            "STAND_PRIVATE_KEY environment variable is empty".to_string(),
+        )),
         Ok(key) => Ok(Some(key)),
         Err(std::env::VarError::NotPresent) => Ok(None),
         Err(std::env::VarError::NotUnicode(_)) => Err(CryptoError::InvalidPrivateKey(
@@ -227,6 +244,63 @@ mod tests {
         let result = load_private_key_from_env();
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_load_private_key_empty_value() {
+        let dir = tempdir().unwrap();
+        let key_file = dir.path().join(".stand.keys");
+        std::fs::write(&key_file, "STAND_PRIVATE_KEY=\n").unwrap();
+
+        let result = load_private_key(&key_file);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(CryptoError::InvalidPrivateKey(_))));
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("empty"),
+            "Error should mention 'empty', got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_load_private_key_from_env_empty() {
+        std::env::set_var("STAND_PRIVATE_KEY", "");
+
+        let result = load_private_key_from_env();
+        assert!(result.is_err());
+        assert!(matches!(result, Err(CryptoError::InvalidPrivateKey(_))));
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("empty"),
+            "Error should mention 'empty', got: {}",
+            err_msg
+        );
+
+        std::env::remove_var("STAND_PRIVATE_KEY");
+    }
+
+    #[test]
+    fn test_key_pair_debug_masks_private_key() {
+        let key_pair = KeyPair::new(
+            "age1public".to_string(),
+            "AGE-SECRET-KEY-1SECRET".to_string(),
+        );
+        let debug_output = format!("{:?}", key_pair);
+
+        assert!(
+            debug_output.contains("age1public"),
+            "Debug output should contain the public key"
+        );
+        assert!(
+            !debug_output.contains("AGE-SECRET-KEY-1SECRET"),
+            "Debug output must NOT contain the private key"
+        );
+        assert!(
+            debug_output.contains("[REDACTED]"),
+            "Debug output should contain [REDACTED] for private key"
+        );
     }
 
     #[test]

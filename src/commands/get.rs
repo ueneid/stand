@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use crate::config::{loader, ConfigError};
-use crate::crypto::{decrypt_value, is_encrypted, CryptoError};
+use crate::crypto::{decrypt_value, is_encrypted, load_private_key_for_decryption, CryptoError};
 
 /// Get a variable value from the configuration.
 ///
@@ -33,27 +33,13 @@ pub fn get_variable(
 
     // Decrypt if encrypted
     if is_encrypted(value) {
-        let private_key = load_private_key(project_dir)?;
+        let private_key = load_private_key_for_decryption(project_dir)?;
         let identity = crate::crypto::keys::parse_private_key(&private_key)?;
         let decrypted = decrypt_value(value, &identity)?;
         Ok(decrypted)
     } else {
         Ok(value.clone())
     }
-}
-
-/// Load private key from environment variable or file.
-fn load_private_key(project_dir: &Path) -> Result<String, GetCommandError> {
-    // First try environment variable (may error on invalid UTF-8)
-    match crate::crypto::keys::load_private_key_from_env() {
-        Ok(Some(key)) => return Ok(key),
-        Ok(None) => {} // Not set, try file
-        Err(e) => return Err(GetCommandError::Crypto(e)),
-    }
-
-    // Then try .stand.keys file
-    let keys_path = project_dir.join(".stand.keys");
-    crate::crypto::keys::load_private_key(&keys_path).map_err(GetCommandError::Crypto)
 }
 
 /// Error type for get command.

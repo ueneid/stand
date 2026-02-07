@@ -7,7 +7,9 @@ use std::path::Path;
 use colored::Colorize;
 use toml_edit::{DocumentMut, Item, Value};
 
-use crate::crypto::{generate_key_pair, CryptoError, ENCRYPTED_PREFIX};
+use crate::crypto::{
+    generate_key_pair, load_private_key_for_decryption, CryptoError, ENCRYPTED_PREFIX,
+};
 
 const KEYS_FILE: &str = ".stand.keys";
 const CONFIG_FILE: &str = ".stand.toml";
@@ -38,20 +40,25 @@ pub fn enable_encryption(project_dir: &Path) -> Result<(), EncryptionCommandErro
     // Generate key pair
     let key_pair = generate_key_pair();
 
+    // Save private key FIRST — this is the hard-to-recover artifact.
+    // If this fails, no state has changed yet (config is untouched).
+    crate::crypto::keys::save_private_key(&keys_path, &key_pair.private_key)
+        .map_err(EncryptionCommandError::Crypto)?;
+
+    // Add .stand.keys to .gitignore before writing config
+    add_to_gitignore(project_dir, KEYS_FILE)?;
+
     // Add [encryption] section to config using toml_edit
     let mut encryption_table = toml_edit::Table::new();
     encryption_table.insert("public_key", toml_edit::value(&key_pair.public_key));
     doc.insert("encryption", Item::Table(encryption_table));
 
-    // Write back preserving formatting
-    fs::write(&config_path, doc.to_string())?;
-
-    // Save private key to .stand.keys
-    crate::crypto::keys::save_private_key(&keys_path, &key_pair.private_key)
-        .map_err(EncryptionCommandError::Crypto)?;
-
-    // Add .stand.keys to .gitignore if not already present
-    add_to_gitignore(project_dir, KEYS_FILE)?;
+    // Write config LAST. If this fails, clean up the key file.
+    if let Err(e) = fs::write(&config_path, doc.to_string()) {
+        // Roll back: remove the key file we just created
+        let _ = fs::remove_file(&keys_path);
+        return Err(e.into());
+    }
 
     println!("{} Generated key pair", "✓".green());
     println!(
@@ -273,21 +280,6 @@ fn add_to_gitignore(project_dir: &Path, filename: &str) -> Result<(), std::io::E
     Ok(())
 }
 
-/// Load private key from file or environment variable.
-fn load_private_key_for_decryption(project_dir: &Path) -> Result<String, EncryptionCommandError> {
-    // First try environment variable (may error on invalid UTF-8)
-    match crate::crypto::keys::load_private_key_from_env() {
-        Ok(Some(key)) => return Ok(key),
-        Ok(None) => {} // Not set, try file
-        Err(e) => return Err(EncryptionCommandError::Crypto(e)),
-    }
-
-    // Then try .stand.keys file
-    let keys_path = project_dir.join(KEYS_FILE);
-    crate::crypto::keys::load_private_key(&keys_path)
-        .map_err(|e| EncryptionCommandError::PrivateKeyLoadFailed(e.to_string()))
-}
-
 /// Error type for encryption commands.
 #[derive(Debug, thiserror::Error)]
 pub enum EncryptionCommandError {
@@ -299,11 +291,6 @@ pub enum EncryptionCommandError {
 
     #[error("Encryption is not enabled for this project")]
     NotEnabled,
-
-    #[error(
-        "Failed to load private key: {0}. Set STAND_PRIVATE_KEY or ensure .stand.keys exists."
-    )]
-    PrivateKeyLoadFailed(String),
 
     #[error("Cryptographic error: {0}")]
     Crypto(#[from] CryptoError),
@@ -563,10 +550,7 @@ SECRET = "encrypted:somedata"
         // Note: No .stand.keys file created
 
         let result = disable_encryption_internal(dir.path());
-        assert!(matches!(
-            result,
-            Err(EncryptionCommandError::PrivateKeyLoadFailed(_))
-        ));
+        assert!(matches!(result, Err(EncryptionCommandError::Crypto(_))));
     }
 
     #[test]

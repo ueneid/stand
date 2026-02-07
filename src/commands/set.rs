@@ -7,6 +7,7 @@ use std::io;
 use std::path::Path;
 
 use colored::Colorize;
+use toml_edit::DocumentMut;
 
 use crate::config::{loader, ConfigError};
 use crate::crypto::{encrypt_value, CryptoError};
@@ -86,11 +87,11 @@ fn get_public_key(config_path: &Path) -> Result<String, SetCommandError> {
     let content = fs::read_to_string(config_path)?;
 
     // Parse TOML to find public_key
-    let toml_value: toml::Value =
-        toml::from_str(&content).map_err(|e| SetCommandError::TomlParse(e.to_string()))?;
+    let doc: DocumentMut = content
+        .parse()
+        .map_err(|e: toml_edit::TomlError| SetCommandError::TomlParse(e.to_string()))?;
 
-    toml_value
-        .get("encryption")
+    doc.get("encryption")
         .and_then(|e| e.get("public_key"))
         .and_then(|k| k.as_str())
         .map(|s| s.to_string())
@@ -99,6 +100,7 @@ fn get_public_key(config_path: &Path) -> Result<String, SetCommandError> {
 
 /// Update a variable in the TOML file.
 ///
+/// Uses toml_edit to preserve comments and formatting.
 /// Variables are stored directly in the environment section due to `#[serde(flatten)]`.
 fn update_toml_variable(
     config_path: &Path,
@@ -108,25 +110,23 @@ fn update_toml_variable(
 ) -> Result<(), SetCommandError> {
     let content = fs::read_to_string(config_path)?;
 
-    // Parse and modify TOML
-    let mut doc: toml::Value =
-        toml::from_str(&content).map_err(|e| SetCommandError::TomlParse(e.to_string()))?;
+    // Parse with toml_edit to preserve formatting
+    let mut doc: DocumentMut = content
+        .parse()
+        .map_err(|e: toml_edit::TomlError| SetCommandError::TomlParse(e.to_string()))?;
 
     // Navigate to environments.<env>
-    let env = doc
+    let env_table = doc
         .get_mut("environments")
         .and_then(|e| e.get_mut(environment))
+        .and_then(|e| e.as_table_mut())
         .ok_or_else(|| SetCommandError::EnvironmentNotFound(environment.to_string()))?;
 
     // Set the variable directly in the environment section (due to #[serde(flatten)])
-    env.as_table_mut()
-        .ok_or_else(|| SetCommandError::TomlParse("Environment is not a table".to_string()))?
-        .insert(key.to_string(), toml::Value::String(value.to_string()));
+    env_table.insert(key, toml_edit::value(value));
 
-    // Write back to file
-    let new_content =
-        toml::to_string_pretty(&doc).map_err(|e| SetCommandError::TomlSerialize(e.to_string()))?;
-    fs::write(config_path, new_content)?;
+    // Write back preserving formatting
+    fs::write(config_path, doc.to_string())?;
 
     Ok(())
 }
@@ -151,9 +151,6 @@ pub enum SetCommandError {
 
     #[error("TOML parsing error: {0}")]
     TomlParse(String),
-
-    #[error("TOML serialization error: {0}")]
-    TomlSerialize(String),
 
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
