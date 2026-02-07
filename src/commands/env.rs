@@ -1,4 +1,5 @@
 use crate::config::loader;
+use crate::crypto::decrypt_variables;
 use crate::shell::{get_active_environment, is_stand_shell_active};
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
@@ -45,7 +46,7 @@ fn get_stand_markers() -> HashMap<String, String> {
     markers
 }
 
-/// Get user-defined variables for the current environment
+/// Get user-defined variables for the current environment (with decryption)
 fn get_user_variables(project_path: &Path, env_name: &str) -> Result<HashMap<String, String>> {
     let config = loader::load_config_toml_with_inheritance(project_path)?;
 
@@ -54,7 +55,11 @@ fn get_user_variables(project_path: &Path, env_name: &str) -> Result<HashMap<Str
         .get(env_name)
         .ok_or_else(|| anyhow!("Environment '{}' not found in configuration", env_name))?;
 
-    Ok(env.variables.clone())
+    // Decrypt any encrypted values
+    let decrypted = decrypt_variables(env.variables.clone(), project_path)
+        .map_err(|e| anyhow!("Failed to decrypt variables: {}", e))?;
+
+    Ok(decrypted)
 }
 
 /// Format output as plain text
@@ -171,13 +176,7 @@ pub fn show_env(project_path: &Path, options: EnvOptions) -> Result<String> {
     let user_vars = if options.stand_only {
         HashMap::new()
     } else {
-        match get_user_variables(project_path, &env_name) {
-            Ok(vars) => vars,
-            Err(e) => {
-                eprintln!("Warning: Could not load user-defined variables: {}", e);
-                HashMap::new()
-            }
-        }
+        get_user_variables(project_path, &env_name)?
     };
 
     // Format output

@@ -1,0 +1,237 @@
+//! Get command implementation.
+//!
+//! Retrieves a variable value from the configuration, decrypting if necessary.
+
+use std::path::Path;
+
+use crate::config::{loader, ConfigError};
+use crate::crypto::{decrypt_value, is_encrypted, load_private_key_for_decryption, CryptoError};
+
+/// Get a variable value from the configuration.
+///
+/// If the value is encrypted and a private key is available, it will be decrypted.
+/// This function resolves inheritance (extends) and common variables.
+pub fn get_variable(
+    project_dir: &Path,
+    environment: &str,
+    key: &str,
+) -> Result<String, GetCommandError> {
+    // Load configuration with inheritance applied (common + extends)
+    let config = loader::load_config_toml_with_inheritance(project_dir)?;
+
+    // Find the environment
+    let env = config
+        .environments
+        .get(environment)
+        .ok_or_else(|| GetCommandError::EnvironmentNotFound(environment.to_string()))?;
+
+    // Find the variable
+    let value = env
+        .variables
+        .get(key)
+        .ok_or_else(|| GetCommandError::VariableNotFound(key.to_string()))?;
+
+    // Decrypt if encrypted
+    if is_encrypted(value) {
+        let private_key = load_private_key_for_decryption(project_dir)?;
+        let identity = crate::crypto::keys::parse_private_key(&private_key)?;
+        let decrypted = decrypt_value(value, &identity)?;
+        Ok(decrypted)
+    } else {
+        Ok(value.clone())
+    }
+}
+
+/// Error type for get command.
+#[derive(Debug, thiserror::Error)]
+pub enum GetCommandError {
+    #[error("Environment not found: {0}")]
+    EnvironmentNotFound(String),
+
+    #[error("Variable not found: {0}")]
+    VariableNotFound(String),
+
+    #[error("Cryptographic error: {0}")]
+    Crypto(#[from] CryptoError),
+
+    #[error("Configuration error: {0}")]
+    Config(#[from] ConfigError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_get_variable_plain() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join(".stand.toml");
+
+        // Note: variables are flattened into the environment section
+        fs::write(
+            &config_path,
+            r#"version = "1.0"
+
+[environments.dev]
+description = "Development"
+API_URL = "https://api.example.com"
+"#,
+        )
+        .unwrap();
+
+        let result = get_variable(dir.path(), "dev", "API_URL");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "https://api.example.com");
+    }
+
+    #[test]
+    fn test_get_variable_not_found() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join(".stand.toml");
+
+        // Note: variables are flattened into the environment section
+        fs::write(
+            &config_path,
+            r#"version = "1.0"
+
+[environments.dev]
+description = "Development"
+API_URL = "https://api.example.com"
+"#,
+        )
+        .unwrap();
+
+        let result = get_variable(dir.path(), "dev", "NONEXISTENT");
+        assert!(matches!(result, Err(GetCommandError::VariableNotFound(_))));
+    }
+
+    #[test]
+    fn test_get_variable_env_not_found() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join(".stand.toml");
+
+        fs::write(
+            &config_path,
+            r#"version = "1.0"
+
+[environments.dev]
+description = "Development"
+"#,
+        )
+        .unwrap();
+
+        let result = get_variable(dir.path(), "prod", "API_KEY");
+        assert!(matches!(
+            result,
+            Err(GetCommandError::EnvironmentNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn test_get_variable_encrypted() {
+        let dir = tempdir().unwrap();
+
+        // Generate keys and save
+        let key_pair = crate::crypto::keys::generate_key_pair();
+        let keys_path = dir.path().join(".stand.keys");
+        crate::crypto::keys::save_private_key(&keys_path, &key_pair.private_key).unwrap();
+
+        // Encrypt a value
+        let recipient = key_pair.to_recipient().unwrap();
+        let encrypted = crate::crypto::encrypt_value("secret-api-key", &recipient).unwrap();
+
+        // Write config with encrypted value
+        let config_path = dir.path().join(".stand.toml");
+        fs::write(
+            &config_path,
+            format!(
+                r#"version = "1.0"
+
+[encryption]
+public_key = "{}"
+
+[environments.dev]
+description = "Development"
+API_KEY = "{}"
+"#,
+                key_pair.public_key, encrypted
+            ),
+        )
+        .unwrap();
+
+        let result = get_variable(dir.path(), "dev", "API_KEY");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "secret-api-key");
+    }
+
+    #[test]
+    fn test_get_variable_from_common_section() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join(".stand.toml");
+
+        fs::write(
+            &config_path,
+            r#"version = "1.0"
+
+[common]
+SHARED_VALUE = "common-value"
+
+[environments.dev]
+description = "Development"
+LOCAL_VALUE = "local-value"
+"#,
+        )
+        .unwrap();
+
+        // Should be able to get common variable
+        let result = get_variable(dir.path(), "dev", "SHARED_VALUE");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "common-value");
+
+        // Should also get local variable
+        let result = get_variable(dir.path(), "dev", "LOCAL_VALUE");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "local-value");
+    }
+
+    #[test]
+    fn test_get_variable_from_extended_environment() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join(".stand.toml");
+
+        fs::write(
+            &config_path,
+            r#"version = "1.0"
+
+[environments.base]
+description = "Base environment"
+BASE_URL = "https://base.example.com"
+OVERRIDE_ME = "base-value"
+
+[environments.dev]
+description = "Development"
+extends = "base"
+OVERRIDE_ME = "dev-value"
+DEV_ONLY = "dev-only-value"
+"#,
+        )
+        .unwrap();
+
+        // Should get inherited variable from base
+        let result = get_variable(dir.path(), "dev", "BASE_URL");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "https://base.example.com");
+
+        // Should get overridden value from dev (not base)
+        let result = get_variable(dir.path(), "dev", "OVERRIDE_ME");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "dev-value");
+
+        // Should get dev-only variable
+        let result = get_variable(dir.path(), "dev", "DEV_ONLY");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "dev-only-value");
+    }
+}

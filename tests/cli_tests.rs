@@ -1,11 +1,11 @@
-use assert_cmd::Command;
+use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use std::fs;
 use tempfile::tempdir;
 
 #[test]
 fn test_cli_shows_help() {
-    let mut cmd = Command::cargo_bin("stand").unwrap();
+    let mut cmd = cargo_bin_cmd!("stand");
     cmd.arg("--help")
         .assert()
         .success()
@@ -16,7 +16,7 @@ fn test_cli_shows_help() {
 
 #[test]
 fn test_cli_shows_version() {
-    let mut cmd = Command::cargo_bin("stand").unwrap();
+    let mut cmd = cargo_bin_cmd!("stand");
     cmd.arg("--version")
         .assert()
         .success()
@@ -27,7 +27,7 @@ fn test_cli_shows_version() {
 fn test_cli_init_creates_config() {
     let dir = tempdir().unwrap();
 
-    let mut cmd = Command::cargo_bin("stand").unwrap();
+    let mut cmd = cargo_bin_cmd!("stand");
     cmd.current_dir(dir.path())
         .arg("init")
         .assert()
@@ -51,7 +51,7 @@ fn test_cli_init_fails_when_exists() {
     // Create existing config
     fs::write(dir.path().join(".stand.toml"), "existing").unwrap();
 
-    let mut cmd = Command::cargo_bin("stand").unwrap();
+    let mut cmd = cargo_bin_cmd!("stand");
     cmd.current_dir(dir.path())
         .arg("init")
         .assert()
@@ -66,9 +66,9 @@ fn test_cli_init_force_overwrites() {
     // Create existing config
     fs::write(dir.path().join(".stand.toml"), "old content").unwrap();
 
-    let mut cmd = Command::cargo_bin("stand").unwrap();
+    let mut cmd = cargo_bin_cmd!("stand");
     cmd.current_dir(dir.path())
-        .args(&["init", "--force"])
+        .args(["init", "--force"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Overwritten existing .stand.toml"));
@@ -82,9 +82,9 @@ fn test_cli_init_force_overwrites() {
 fn test_cli_shell_command_no_config() {
     let dir = tempdir().unwrap();
 
-    let mut cmd = Command::cargo_bin("stand").unwrap();
+    let mut cmd = cargo_bin_cmd!("stand");
     cmd.current_dir(dir.path())
-        .args(&["shell", "dev"])
+        .args(["shell", "dev"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("Error:")); // Should fail without .stand.toml file
@@ -94,7 +94,7 @@ fn test_cli_shell_command_no_config() {
 fn test_cli_list_command_no_config_basic() {
     let dir = tempdir().unwrap();
 
-    let mut cmd = Command::cargo_bin("stand").unwrap();
+    let mut cmd = cargo_bin_cmd!("stand");
     cmd.current_dir(dir.path())
         .arg("list")
         .assert()
@@ -121,7 +121,7 @@ requires_confirmation = true
     let config_path = dir.path().join(".stand.toml");
     fs::write(&config_path, config_content).unwrap();
 
-    let mut cmd = Command::cargo_bin("stand").unwrap();
+    let mut cmd = cargo_bin_cmd!("stand");
     cmd.current_dir(dir.path())
         .arg("list")
         .assert()
@@ -141,7 +141,7 @@ fn test_cli_list_command_no_config() {
     let dir = tempdir().unwrap();
     // No .stand.toml file created
 
-    let mut cmd = Command::cargo_bin("stand").unwrap();
+    let mut cmd = cargo_bin_cmd!("stand");
     cmd.current_dir(dir.path())
         .arg("list")
         .assert()
@@ -150,7 +150,7 @@ fn test_cli_list_command_no_config() {
 }
 
 #[test]
-fn test_cli_show_command_with_config() {
+fn test_cli_inspect_command_with_config() {
     let dir = tempdir().unwrap();
     let config_content = r#"
 version = "2.0"
@@ -169,9 +169,9 @@ DEBUG = "true"
     let config_path = dir.path().join(".stand.toml");
     fs::write(&config_path, config_content).unwrap();
 
-    let mut cmd = Command::cargo_bin("stand").unwrap();
+    let mut cmd = cargo_bin_cmd!("stand");
     cmd.current_dir(dir.path())
-        .args(&["show", "dev"])
+        .args(["inspect", "dev"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Environment: dev"))
@@ -182,7 +182,7 @@ DEBUG = "true"
 }
 
 #[test]
-fn test_cli_show_command_with_values() {
+fn test_cli_inspect_command_with_values() {
     let dir = tempdir().unwrap();
     let config_content = r#"
 version = "2.0"
@@ -199,9 +199,9 @@ DATABASE_URL = "postgres://localhost:5432/dev"
     let config_path = dir.path().join(".stand.toml");
     fs::write(&config_path, config_content).unwrap();
 
-    let mut cmd = Command::cargo_bin("stand").unwrap();
+    let mut cmd = cargo_bin_cmd!("stand");
     cmd.current_dir(dir.path())
-        .args(&["show", "dev", "--values"])
+        .args(["inspect", "dev", "--values"])
         .assert()
         .success()
         .stdout(predicate::str::contains("APP_NAME=MyApp (from common)"))
@@ -211,7 +211,7 @@ DATABASE_URL = "postgres://localhost:5432/dev"
 }
 
 #[test]
-fn test_cli_show_command_nonexistent_env() {
+fn test_cli_inspect_command_nonexistent_env() {
     let dir = tempdir().unwrap();
     let config_content = r#"
 version = "2.0"
@@ -224,9 +224,9 @@ description = "Development environment"
     let config_path = dir.path().join(".stand.toml");
     fs::write(&config_path, config_content).unwrap();
 
-    let mut cmd = Command::cargo_bin("stand").unwrap();
+    let mut cmd = cargo_bin_cmd!("stand");
     cmd.current_dir(dir.path())
-        .args(&["show", "nonexistent"])
+        .args(["inspect", "nonexistent"])
         .assert()
         .failure()
         .stderr(predicate::str::contains(
@@ -237,7 +237,7 @@ description = "Development environment"
 #[test]
 fn test_cli_env_command_not_in_subshell() {
     // When run outside of a Stand subshell (no STAND_ACTIVE), should fail
-    let mut cmd = Command::cargo_bin("stand").unwrap();
+    let mut cmd = cargo_bin_cmd!("stand");
     cmd.env_remove("STAND_ACTIVE")
         .env_remove("STAND_ENVIRONMENT")
         .arg("env")
@@ -249,9 +249,218 @@ fn test_cli_env_command_not_in_subshell() {
 #[test]
 fn test_cli_env_command_options_conflict() {
     // --stand-only and --user-only should conflict
-    let mut cmd = Command::cargo_bin("stand").unwrap();
-    cmd.args(&["env", "--stand-only", "--user-only"])
+    let mut cmd = cargo_bin_cmd!("stand");
+    cmd.args(["env", "--stand-only", "--user-only"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("cannot be used with"));
+}
+
+// === Encryption Integration Tests ===
+
+#[test]
+fn test_cli_encrypt_enable_creates_keys() {
+    let dir = tempdir().unwrap();
+
+    // First initialize the project
+    let mut cmd = cargo_bin_cmd!("stand");
+    cmd.current_dir(dir.path()).arg("init").assert().success();
+
+    // Enable encryption
+    let mut cmd = cargo_bin_cmd!("stand");
+    cmd.current_dir(dir.path())
+        .args(["encrypt", "enable"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Generated key pair"))
+        .stdout(predicate::str::contains("Added [encryption] section"));
+
+    // Verify .stand.keys was created
+    let keys_path = dir.path().join(".stand.keys");
+    assert!(keys_path.exists());
+
+    // Verify [encryption] section was added to config
+    let config_content = fs::read_to_string(dir.path().join(".stand.toml")).unwrap();
+    assert!(config_content.contains("[encryption]"));
+    assert!(config_content.contains("public_key = \"age1"));
+}
+
+#[test]
+fn test_cli_encrypt_enable_already_enabled() {
+    let dir = tempdir().unwrap();
+
+    // Initialize and enable encryption
+    let mut cmd = cargo_bin_cmd!("stand");
+    cmd.current_dir(dir.path()).arg("init").assert().success();
+
+    let mut cmd = cargo_bin_cmd!("stand");
+    cmd.current_dir(dir.path())
+        .args(["encrypt", "enable"])
+        .assert()
+        .success();
+
+    // Try to enable again - should fail
+    let mut cmd = cargo_bin_cmd!("stand");
+    cmd.current_dir(dir.path())
+        .args(["encrypt", "enable"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already enabled"));
+}
+
+#[test]
+fn test_cli_init_with_encrypt_flag() {
+    let dir = tempdir().unwrap();
+
+    // Initialize with --encrypt flag
+    let mut cmd = cargo_bin_cmd!("stand");
+    cmd.current_dir(dir.path())
+        .args(["init", "--encrypt"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Created .stand.toml"))
+        .stdout(predicate::str::contains("Generated key pair"));
+
+    // Verify both config and keys were created
+    assert!(dir.path().join(".stand.toml").exists());
+    assert!(dir.path().join(".stand.keys").exists());
+
+    // Verify encryption section in config
+    let config_content = fs::read_to_string(dir.path().join(".stand.toml")).unwrap();
+    assert!(config_content.contains("[encryption]"));
+}
+
+#[test]
+fn test_cli_set_and_get_encrypted_value() {
+    let dir = tempdir().unwrap();
+
+    // Initialize with encryption
+    let mut cmd = cargo_bin_cmd!("stand");
+    cmd.current_dir(dir.path())
+        .args(["init", "--encrypt"])
+        .assert()
+        .success();
+
+    // Set an encrypted value
+    let mut cmd = cargo_bin_cmd!("stand");
+    cmd.current_dir(dir.path())
+        .args(["set", "dev", "API_KEY", "secret-value-123", "--encrypt"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(encrypted)"));
+
+    // Verify the value is encrypted in the config file
+    let config_content = fs::read_to_string(dir.path().join(".stand.toml")).unwrap();
+    assert!(config_content.contains("API_KEY = \"encrypted:"));
+    assert!(!config_content.contains("secret-value-123")); // Plain value should NOT appear
+
+    // Get the value - should be decrypted
+    let mut cmd = cargo_bin_cmd!("stand");
+    cmd.current_dir(dir.path())
+        .args(["get", "dev", "API_KEY"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("secret-value-123"));
+}
+
+#[test]
+fn test_cli_inspect_shows_encrypted_marker() {
+    let dir = tempdir().unwrap();
+
+    // Initialize with encryption
+    let mut cmd = cargo_bin_cmd!("stand");
+    cmd.current_dir(dir.path())
+        .args(["init", "--encrypt"])
+        .assert()
+        .success();
+
+    // Set an encrypted value
+    let mut cmd = cargo_bin_cmd!("stand");
+    cmd.current_dir(dir.path())
+        .args(["set", "dev", "SECRET", "my-secret", "--encrypt"])
+        .assert()
+        .success();
+
+    // Inspect should show [ENCRYPTED] marker
+    let mut cmd = cargo_bin_cmd!("stand");
+    cmd.current_dir(dir.path())
+        .args(["inspect", "dev", "--values"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[ENCRYPTED]"))
+        .stdout(predicate::str::contains("SECRET"));
+}
+
+#[test]
+fn test_cli_set_encrypted_without_encryption_enabled() {
+    let dir = tempdir().unwrap();
+
+    // Initialize WITHOUT encryption
+    let mut cmd = cargo_bin_cmd!("stand");
+    cmd.current_dir(dir.path()).arg("init").assert().success();
+
+    // Try to set encrypted value - should fail
+    let mut cmd = cargo_bin_cmd!("stand");
+    cmd.current_dir(dir.path())
+        .args(["set", "dev", "API_KEY", "secret", "--encrypt"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Encryption is not enabled"));
+}
+
+#[test]
+fn test_cli_env_fails_on_decryption_error() {
+    let dir = tempdir().unwrap();
+
+    // Create a config with an encrypted value but NO .stand.keys file
+    let config_content = r#"
+version = "2.0"
+
+[encryption]
+public_key = "age1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+[environments.dev]
+description = "Development"
+SECRET = "encrypted:invaliddata"
+"#;
+    fs::write(dir.path().join(".stand.toml"), config_content).unwrap();
+
+    // Run `stand env` simulating being inside a Stand subshell
+    let mut cmd = cargo_bin_cmd!("stand");
+    cmd.current_dir(dir.path())
+        .env("STAND_ACTIVE", "1")
+        .env("STAND_ENVIRONMENT", "dev")
+        .env("STAND_PROJECT_ROOT", dir.path().to_str().unwrap())
+        .env_remove("STAND_PRIVATE_KEY")
+        .arg("env")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("decrypt").or(predicate::str::contains("private key")));
+}
+
+#[test]
+fn test_cli_exec_fails_on_decryption_error() {
+    let dir = tempdir().unwrap();
+
+    // Create a config with an encrypted value but NO .stand.keys file
+    let config_content = r#"
+version = "2.0"
+
+[encryption]
+public_key = "age1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+[environments.dev]
+description = "Development"
+SECRET = "encrypted:invaliddata"
+"#;
+    fs::write(dir.path().join(".stand.toml"), config_content).unwrap();
+
+    // Run `stand exec dev -- echo test` — should fail before executing the command
+    let mut cmd = cargo_bin_cmd!("stand");
+    cmd.current_dir(dir.path())
+        .env_remove("STAND_PRIVATE_KEY")
+        .args(["exec", "dev", "--", "echo", "test"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("decrypt").or(predicate::str::contains("private key")));
 }
