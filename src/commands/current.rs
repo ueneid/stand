@@ -36,7 +36,7 @@ mod tests {
         // Test that the current command logic is sound
         // For now, we test that the function compiles and can handle basic scenarios
         // Full integration tests should be in separate test files
-        assert!(true); // Placeholder test
+        // Placeholder: verify module compiles correctly
     }
 
     #[test]

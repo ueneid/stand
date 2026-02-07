@@ -56,7 +56,16 @@ pub fn enable_encryption(project_dir: &Path) -> Result<(), EncryptionCommandErro
     // Write config LAST. If this fails, clean up the key file.
     if let Err(e) = fs::write(&config_path, doc.to_string()) {
         // Roll back: remove the key file we just created
-        let _ = fs::remove_file(&keys_path);
+        if let Err(cleanup_err) = fs::remove_file(&keys_path) {
+            eprintln!(
+                "Warning: Failed to clean up {} after configuration write error: {}",
+                KEYS_FILE, cleanup_err
+            );
+            eprintln!(
+                "Please manually remove {} to prevent security issues.",
+                keys_path.display()
+            );
+        }
         return Err(e.into());
     }
 

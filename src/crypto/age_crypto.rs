@@ -50,7 +50,15 @@ pub fn decrypt_value(encrypted_value: &str, identity: &Identity) -> Result<Strin
         .strip_prefix(ENCRYPTED_PREFIX)
         .ok_or_else(|| CryptoError::DecryptionFailed("Missing encrypted: prefix".to_string()))?;
 
-    let encrypted = BASE64.decode(encoded)?;
+    if encoded.is_empty() {
+        return Err(CryptoError::DecryptionFailed(
+            "Encrypted value is empty after prefix".to_string(),
+        ));
+    }
+
+    let encrypted = BASE64.decode(encoded).map_err(|e| {
+        CryptoError::DecryptionFailed(format!("Invalid base64 encoding in encrypted value: {}", e))
+    })?;
 
     let decryptor = match age::Decryptor::new(&encrypted[..])
         .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?
@@ -154,5 +162,19 @@ mod tests {
 
         let result = decrypt_value("encrypted:not-valid-base64!!!", &identity);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decrypt_empty_after_prefix_fails() {
+        let key_pair = generate_key_pair();
+        let identity = key_pair.to_identity().unwrap();
+        let result = decrypt_value("encrypted:", &identity);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("empty"),
+            "Error should mention 'empty', got: {}",
+            err_msg
+        );
     }
 }
