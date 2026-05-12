@@ -1,5 +1,6 @@
 use serial_test::serial;
 use stand::commands::exec;
+use std::env;
 use std::fs;
 use tempfile::tempdir;
 
@@ -256,7 +257,12 @@ description = "Development environment"
 }
 
 #[test]
+#[serial]
 fn test_exec_requires_confirmation_without_yes_flag() {
+    // Force non-TTY behavior so the test is deterministic regardless of how
+    // `cargo test` is invoked (CI pipes vs. interactive shells).
+    env::set_var("STAND_FORCE_NON_TTY", "1");
+
     let dir = tempdir().unwrap();
     let config_content = r#"
 version = "2.0"
@@ -278,6 +284,8 @@ DATABASE_URL = "postgres://prod:5432/prod"
         vec!["echo".to_string(), "hello".to_string()],
         false,
     );
+
+    env::remove_var("STAND_FORCE_NON_TTY");
 
     assert!(result.is_err());
     let error_msg = format!("{}", result.unwrap_err());
