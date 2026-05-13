@@ -10,7 +10,13 @@ feature-depth = 1
 [advisories]
 version = 2
 yanked = "deny"
-ignore = []
+ignore = [
+    # proc-macro-error v1.x is unmaintained. It is transitively pulled in via
+    # age -> i18n-embed-fl -> fluent-bundle. Drop this ignore once those crates
+    # migrate to proc-macro-error2 (or another maintained alternative).
+    # https://rustsec.org/advisories/RUSTSEC-2024-0370
+    "RUSTSEC-2024-0370",
+]
 
 [licenses]
 version = 2
