@@ -41,7 +41,7 @@ anyhow = "1.0"
 thiserror = "1.0"
 
 # Terminal and output
-colored = "2.0"
+colored = "3.1"
 rpassword = "7.3"
 
 # Data structures
