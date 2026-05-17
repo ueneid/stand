@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-05-17
+
+### Changed
+
+- Updated dependencies to current major versions:
+  - `thiserror` 1 → 2
+  - `toml` 0.8 → 1.1
+  - `toml_edit` 0.22 → 0.25
+  - `colored` 2 → 3
+  - `age` 0.10 → 0.11
+
+### Internal
+
+- Added a hardened CI workflow (lint, test matrix, `cargo-deny`,
+  `cargo-machete`).
+- Added Dependabot configuration with supply-chain hardening.
+
 ## [0.2.1] - 2026-05-12
 
 ### Changed
@@ -59,6 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nested shell prevention
 - Confirmation prompts for protected environments
 
+[0.2.2]: https://github.com/ueneid/stand/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/ueneid/stand/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ueneid/stand/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/ueneid/stand/compare/v0.1.0...v0.1.1
