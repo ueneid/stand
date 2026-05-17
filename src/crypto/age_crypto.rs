@@ -21,8 +21,9 @@ pub fn is_encrypted(value: &str) -> bool {
 /// # Errors
 /// Returns `CryptoError::EncryptionFailed` if encryption fails.
 pub fn encrypt_value(plaintext: &str, recipient: &Recipient) -> Result<String, CryptoError> {
-    let encryptor = age::Encryptor::with_recipients(vec![Box::new(recipient.clone())])
-        .ok_or_else(|| CryptoError::EncryptionFailed("Failed to create encryptor".to_string()))?;
+    let encryptor =
+        age::Encryptor::with_recipients(std::iter::once(recipient as &dyn age::Recipient))
+            .map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
 
     let mut encrypted = vec![];
     let mut writer = encryptor
@@ -60,16 +61,8 @@ pub fn decrypt_value(encrypted_value: &str, identity: &Identity) -> Result<Strin
         CryptoError::DecryptionFailed(format!("Invalid base64 encoding in encrypted value: {}", e))
     })?;
 
-    let decryptor = match age::Decryptor::new(&encrypted[..])
-        .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?
-    {
-        age::Decryptor::Recipients(d) => d,
-        _ => {
-            return Err(CryptoError::DecryptionFailed(
-                "Unexpected decryptor type".to_string(),
-            ))
-        }
-    };
+    let decryptor = age::Decryptor::new(&encrypted[..])
+        .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
 
     let mut decrypted = vec![];
     let mut reader = decryptor
