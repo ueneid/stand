@@ -35,7 +35,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master, pinned 2026-04
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master, pinned 2026-04
         with:
           toolchain: stable
           components: rustfmt, clippy
@@ -68,7 +68,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust ${{ matrix.rust }}
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master, pinned 2026-04
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master, pinned 2026-04
         with:
           toolchain: ${{ matrix.rust }}
 
