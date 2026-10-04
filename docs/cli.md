@@ -118,7 +118,7 @@ Options:
 - Detects and prevents nested shells by default (configurable via `nested_shell_behavior`)
 - Encrypted values are decrypted once at start (requires [unlock](#unlocking-encrypted-values))
 - `stand set` / `stand unset` update the running shell (see [Shell Reflect](#shell-reflect))
-- Refuses to inject blocked variable names (see [`set`](#set))
+- Refuses to inject blocked variable names, before any confirmation or decryption; warned names print one warning (see [`set`](#set))
 - Secrets in the shell are readable by any process of your user. Do not start AI agents inside it; prefer `stand exec`
 
 **Implementation Status:** ✅ Implemented
@@ -141,7 +141,7 @@ Options:
 
 **Notes:**
 - Encrypted values are decrypted once per command (requires [unlock](#unlocking-encrypted-values)).
-- Blocked variable names are refused (see [`set`](#set)).
+- Blocked variable names are refused before any confirmation or decryption; warned names print one warning (see [`set`](#set)).
 
 **Examples:**
 ```bash
@@ -154,11 +154,11 @@ stand exec staging -- python manage.py migrate
 
 ---
 
-### `show`
+### `inspect`
 Display environment variables for the specified environment.
 
 ```bash
-stand show <ENVIRONMENT> [OPTIONS]
+stand inspect <ENVIRONMENT> [OPTIONS]
 
 Arguments:
   <ENVIRONMENT>  Environment name to show
@@ -169,7 +169,7 @@ Options:
 
 **Output Examples:**
 ```bash
-# stand show dev
+# stand inspect dev
 Environment: dev
 Variables:
   DATABASE_URL
@@ -177,7 +177,7 @@ Variables:
   LOG_LEVEL
   APP_NAME (from common)
 
-# stand show dev --values
+# stand inspect dev --values
 Environment: dev
 Variables:
   DATABASE_URL=postgres://localhost:5432/dev
@@ -252,10 +252,11 @@ Options:
 **Behavior:**
 - Names must match `^[A-Za-z_][A-Za-z0-9_]*$`.
 - Refuses reserved keys (`description`, `extends`, `color`, `requires_confirmation`).
-- Refuses names that could plant hooks in your shell (`BASH_ENV`, `ENV`, `PROMPT_COMMAND`, `PS0`-`PS4`, `SHELLOPTS`, `BASHOPTS`, `ZDOTDIR`, `HOME`, `XDG_CONFIG_HOME`, `IFS`, and prefixes `LD_`, `DYLD_`, `BASH_FUNC_`, `STAND_`).
-- Warns for `PATH`, `NODE_OPTIONS`, `PYTHONSTARTUP`, `PYTHONPATH`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`.
-- `--encrypt` needs only the project's public key. It does not unlock anything. It warns if the public key matches no local identity (possible swapped key).
-- Inside `stand shell`, the change is applied to the current shell immediately (see [Shell Reflect](#shell-reflect)).
+- Refuses names that could plant hooks in your shell (`BASH_ENV`, `ENV`, `PROMPT_COMMAND`, `PS0`-`PS4`, `SHELLOPTS`, `BASHOPTS`, `ZDOTDIR`, `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_DIRS`, `XDG_CONFIG_DIRS`, `IFS`, and prefixes `LD_`, `DYLD_`, `BASH_FUNC_`, `STAND_`).
+- Matching is ASCII case-insensitive.
+- Warns for `PATH`, `NODE_OPTIONS`, `PYTHONSTARTUP`, `PYTHONPATH`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`, `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, `NODE_PATH`, `PYTHONHOME`.
+- `--encrypt` needs only the project's public key. It does not unlock anything. It warns (and continues) if the public key matches no local identity and there is no `.stand.keys`: the value may then be decryptable only by someone else, so check `[encryption].public_key`.
+- Inside `stand shell`, the change is applied to the current shell immediately (see [Shell Reflect](#shell-reflect)). With `--encrypt` the plaintext you just typed is applied without an unlock.
 
 See [Security Guide](security.md#variable-name-guards) for the reasons.
 
@@ -279,7 +280,7 @@ Arguments:
 - Fails if the environment does not exist.
 - Fails if the key is not in that table. The error hints when the key lives in `[common]` or is inherited through `extends`.
 - Reserved keys (`description`, `extends`, `color`, `requires_confirmation`) cannot be unset.
-- Inside `stand shell`, the change is applied to the current shell immediately. If the key falls back to an inherited encrypted value, Stand asks you to unlock and applies the decrypted value.
+- Inside `stand shell`, the change is applied to the current shell immediately. If the key falls back to an inherited encrypted value, Stand asks you to unlock and applies the decrypted value; if that fails, the variable is removed from the shell and a warning asks you to restart the stand shell.
 
 **Examples:**
 ```bash
@@ -310,9 +311,9 @@ stand encrypt disable
 ```
 
 - **`enable`**: Creates a project key pair and stores the private key wrapped by a new passphrase (asked twice) in the identities directory. No `.stand.keys` is created. With `--touch-id` it also wraps the key to a Secure Enclave key (see `add-touch-id` for requirements). `stand init --encrypt` is the same as `enable` without Touch ID.
-- **`migrate`**: Moves an existing `.stand.keys` into the identities directory, wrapped by a new passphrase. It verifies the result, then overwrites and deletes `.stand.keys`. Encrypted values are not changed.
-- **`add-touch-id`**: Adds Touch ID unlock. Requires `brew install age-plugin-se` and macOS 14+ with a Secure Enclave. Unlocks with the passphrase once.
-- **`disable`**: Decrypts all values, removes `[encryption]` from `.stand.toml` and removes the identity files. Requires unlock.
+- **`migrate`**: Moves an existing `.stand.keys` into the identities directory, wrapped by a new passphrase. It verifies the result, then overwrites and deletes `.stand.keys`. Encrypted values are not changed. Refuses if `<public_key>.age` already exists, or if `.stand.keys` is a symlink or has extra hard links.
+- **`add-touch-id`**: Adds Touch ID unlock. Requires `brew install age-plugin-se` and macOS 14+ with a Secure Enclave. Unlocks with the passphrase once. Needs an exact project binding (see below). `.se-identity` may only contain `se` plugin identities.
+- **`disable`**: Asks for confirmation, decrypts all values and removes `[encryption]` from `.stand.toml`. Requires unlock. The identity files are deleted only after an unlock that verified the project binding; otherwise they are kept and their paths are printed.
 
 The passphrase identity is your backup if the Mac is lost. The Secure Enclave key cannot leave the device.
 
@@ -327,12 +328,18 @@ Every decryption (`get`, `exec`, `shell`, `encrypt disable`, and the `unset` fal
 
 Unlock order:
 
-1. `STAND_PRIVATE_KEY` (only with `CI=true`/`1` or `STAND_KEY_SOURCE=env`)
-2. Legacy `.stand.keys` (works, prints a deprecation warning; run `stand encrypt migrate`)
+1. `STAND_PRIVATE_KEY` (only with `CI=true`/`1` or `STAND_KEY_SOURCE=env`; set without either, Stand refuses with an error)
+2. Legacy `.stand.keys` (works, prints a deprecation warning; run `stand encrypt migrate`; used only when no wrapped identity exists)
 3. Touch ID (if set up, `age-plugin-se` is on `PATH`, and `STAND_UNLOCK` is not `passphrase`; falls back to the passphrase on failure)
 4. Passphrase (3 attempts)
 
-The unwrapped key must match the project's public key. See [CI](security.md#ci) for non-interactive use.
+The unwrapped key must match the project's public key.
+
+**Project binding:** the wrapped key's plaintext contains `# project: <path>`. On a mismatch, read-only decryption (`get`, `exec`, `shell`, the `unset` fallback) shows both paths and asks for explicit confirmation for that single run. Operations that write or delete key material (`add-touch-id`, `migrate`, the identity deletion of `disable`) require an exact match.
+
+**Prompt text:** the banner and prompts are sanitized (control characters are escaped; bidirectional and zero-width characters are shown as escapes; long fields keep head and tail). Before Touch ID the banner shows the resolved path of `age-plugin-se`.
+
+See [CI](security.md#ci) for non-interactive use.
 
 ---
 
@@ -340,7 +347,10 @@ The unwrapped key must match the project's public key. See [CI](security.md#ci) 
 
 Inside `stand shell <env>` (bash, zsh, fish), `stand set` and `stand unset` update the current shell immediately. The subshell defines a `stand` shell function that reads the changes from the binary through fd 3 and applies them with strictly quoted `export`/`unset` (fish: `set -gx`/`set -e`) lines. No temp files hold the values.
 
-- Only changes that affect the active environment are applied (`common`, `extends` and `${VAR}` interpolation are respected).
+- Only runs when `STAND_ACTIVE=1`, `STAND_ENVIRONMENT` and `STAND_PROJECT_ROOT` are set and the project directory is the one the shell was started for.
+- Only changes that affect the active environment are applied. Stand compares the effective value (`common`, `extends` and `${VAR}` interpolation resolved) of the key for the active environment before and after the write. Unchanged means nothing is sent; a removed value becomes `unset`; a new value is exported.
+- `set --encrypt` applies the plaintext you typed without an unlock. An inherited encrypted value (for example after `unset`) is decrypted with the normal unlock; if that fails, the variable is unset and a warning asks you to restart the stand shell.
+- If the shell cannot be updated, Stand prints a warning. The configuration was already written, so the exit code stays 0.
 - Calling the binary by its full path bypasses the function, so nothing is reflected.
 - Other shells have no reflect. Restart `stand shell` to see changes.
 
@@ -373,18 +383,13 @@ Inside `stand shell <env>` (bash, zsh, fish), `stand set` and `stand unset` upda
 ## Exit Codes
 
 - `0`: Success
-- `1`: General error (invalid arguments, missing files, etc.)
-- `2`: Configuration validation error
-- `3`: Permission error
-- `130`: Interrupted by user (Ctrl+C)
+- `1`: Error (invalid arguments, missing files, configuration or decryption errors, etc.)
+- `shell` and `exec` return the exit code of the shell or command they ran
 
 ## Environment Variables
 
 Stand respects the following environment variables:
 
-- `STAND_CONFIG`: Override default configuration file path
-- `STAND_NO_COLOR`: Disable colored output
-- `STAND_QUIET`: Suppress non-error output
 - `STAND_PRIVATE_KEY`: Private key for non-interactive unlock. Used only when `CI=true`/`1` or `STAND_KEY_SOURCE=env`. Never export it in an interactive shell profile
 - `STAND_KEY_SOURCE`: Set to `env` to allow `STAND_PRIVATE_KEY` outside CI
 - `STAND_UNLOCK`: Set to `passphrase` to skip Touch ID

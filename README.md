@@ -32,7 +32,7 @@ cargo install --path .
 
 3. **Show variables for an environment:**
    ```bash
-   stand show dev --values
+   stand inspect dev --values
    ```
 
 4. **Execute command with environment:**
@@ -86,7 +86,7 @@ See [Configuration Format](docs/configuration.md) for all available settings.
 Stand can encrypt secret values with age. The private key is not kept in the project. It is stored in `~/.config/stand/identities/`, wrapped by a passphrase and, on macOS, optionally by Touch ID (Secure Enclave).
 
 - Every decryption needs an interactive terminal and a human unlock (Touch ID or passphrase).
-- Variable names that could plant shell hooks (`BASH_ENV`, `LD_*`, ...) are refused.
+- Variable names that could plant shell hooks (`BASH_ENV`, `LD_*`, ...) are refused by `set` and when `shell` / `exec` inject variables (case-insensitive).
 - Secrets in a running shell or command are readable by any process of your user. Do not start AI agents inside `stand shell`.
 
 ```bash
@@ -156,7 +156,7 @@ cargo fmt && cargo clippy -- -D warnings && cargo test
 - ✅ `init` - Initialize new configuration
 - ✅ `shell` - Start interactive shell with environment loaded
 - ✅ `exec` - Execute command with environment variables
-- ✅ `show` - Show environment variables with source attribution
+- ✅ `inspect` - Show environment variables with source attribution
 - ✅ `env` - Show active environment variables in current subshell
 - ✅ `set`/`unset` - Modify environment variables (updates the running `stand shell` immediately)
 - ✅ `encrypt` - Enable, migrate, add Touch ID, or disable encryption

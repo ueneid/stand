@@ -10,10 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking
 
 - Decryption now requires an interactive terminal (`/dev/tty`).
-- `STAND_PRIVATE_KEY` is only used with `CI=true`/`1` or `STAND_KEY_SOURCE=env`.
+- `STAND_PRIVATE_KEY` is only accepted with `CI=true`/`1` or `STAND_KEY_SOURCE=env`. Otherwise Stand refuses with an error.
 - `.stand.keys` is deprecated. It still works but prints a warning. Run `stand encrypt migrate`.
 - `stand env` no longer decrypts. It reads values from the current shell's environment.
 - `stand set` refuses reserved keys (`description`, `extends`, `color`, `requires_confirmation`) and blocked variable names.
+- `stand shell` and `stand exec` refuse to inject blocked variable names (checked before confirmation and decryption), and warn about risky ones.
 
 ### Added
 
@@ -21,8 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shell reflect: inside `stand shell` (bash, zsh, fish), `stand set` and `stand unset` update the current shell immediately.
 - `stand encrypt enable [--touch-id]`, `stand encrypt migrate`, `stand encrypt add-touch-id`, and an updated `stand encrypt disable`.
 - Touch ID unlock through a Secure Enclave key (`age-plugin-se`, macOS 14+).
-- Variable name guards: names must match `^[A-Za-z_][A-Za-z0-9_]*$`. Hook-planting names are refused. Risky names (`PATH`, `NODE_OPTIONS`, ...) produce a warning.
+- Variable name guards: names must match `^[A-Za-z_][A-Za-z0-9_]*$`. Hook-planting names are refused (ASCII case-insensitive). Risky names (`PATH`, `NODE_OPTIONS`, `NODE_PATH`, `JAVA_TOOL_OPTIONS`, ...) produce a warning.
 - `stand set --encrypt` warns if the project's public key matches no local identity.
+- Wrapped keys are bound to their project (`# project: <path>`). Read-only decryption asks for confirmation on a mismatch; key-writing operations require an exact match.
+- `stand encrypt disable` deletes identity files only after a binding-verified unlock; otherwise it keeps them and prints their paths. `stand encrypt migrate` refuses if `<public_key>.age` exists or if `.stand.keys` is a symlink or has extra hard links.
+- Prompt text is sanitized (control, bidi and zero-width characters are escaped) and the banner shows the resolved `age-plugin-se` path before Touch ID.
 - `docs/security.md`: threat model, setup, migration, CI, sandbox advice, residual risks.
 
 ### Changed
@@ -31,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unlock order: `STAND_PRIVATE_KEY` (CI only), legacy `.stand.keys`, Touch ID, passphrase.
 - `stand init --encrypt` no longer writes `.stand.keys`.
 - Temp directories for bash/zsh init are random and `0700`.
+- `docs/security.md` is included in the published crate.
+
+### Fixed
+
+- Documentation named a `show` command; the command is `inspect`. Removed documented environment variables (`STAND_CONFIG`, `STAND_NO_COLOR`, `STAND_QUIET`) and exit codes that the code never implemented.
 
 ### Security
 

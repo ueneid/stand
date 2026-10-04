@@ -86,9 +86,10 @@ All other keys in an environment section are treated as environment variables.
 ### Variable Name Rules
 - Names must match `^[A-Za-z_][A-Za-z0-9_]*$`.
 - Reserved keys (`description`, `extends`, `color`, `requires_confirmation`) cannot be used as variables.
-- **Refused** (they can plant hooks in your interactive shell): `BASH_ENV`, `ENV`, `PROMPT_COMMAND`, `PS0`-`PS4`, `SHELLOPTS`, `BASHOPTS`, `ZDOTDIR`, `HOME`, `XDG_CONFIG_HOME`, `IFS`, and names starting with `LD_`, `DYLD_`, `BASH_FUNC_` or `STAND_`.
-- **Warned**: `PATH`, `NODE_OPTIONS`, `PYTHONSTARTUP`, `PYTHONPATH`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`.
-- The rules apply to `stand set` and to injection in `stand shell` / `stand exec`.
+- **Refused** (they can plant hooks in your interactive shell): `BASH_ENV`, `ENV`, `PROMPT_COMMAND`, `PS0`-`PS4`, `SHELLOPTS`, `BASHOPTS`, `ZDOTDIR`, `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_DIRS`, `XDG_CONFIG_DIRS`, `IFS`, and names starting with `LD_`, `DYLD_`, `BASH_FUNC_` or `STAND_`.
+- **Warned**: `PATH`, `NODE_OPTIONS`, `PYTHONSTARTUP`, `PYTHONPATH`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`, `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, `NODE_PATH`, `PYTHONHOME`.
+- Matching is ASCII case-insensitive (`bash_env` is refused like `BASH_ENV`).
+- The rules apply to `stand set` and to injection in `stand shell` / `stand exec`. A hand-edited `.stand.toml` with a refused name makes `shell` and `exec` fail before anything is decrypted; a warned name prints one warning.
 
 See the [Security Guide](security.md#variable-name-guards).
 

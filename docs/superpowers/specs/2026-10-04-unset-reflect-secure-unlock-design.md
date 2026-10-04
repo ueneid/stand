@@ -50,9 +50,10 @@ The `stand` shell function captures fd 3 from the binary and evals the output. S
 
 Names must match `^[A-Za-z_][A-Za-z0-9_]*$`.
 
-- Refused: `BASH_ENV`, `ENV`, `PROMPT_COMMAND`, `PS0`-`PS4`, `SHELLOPTS`, `BASHOPTS`, `ZDOTDIR`, `HOME`, `XDG_CONFIG_HOME`, `IFS`; prefixes `LD_`, `DYLD_`, `BASH_FUNC_`, `STAND_`.
-- Warned: `PATH`, `NODE_OPTIONS`, `PYTHONSTARTUP`, `PYTHONPATH`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`.
-- Applied in `stand set` and on injection in `shell` / `exec`, so a hand-edited `.stand.toml` is covered too.
+- Refused: `BASH_ENV`, `ENV`, `PROMPT_COMMAND`, `PS0`-`PS4`, `SHELLOPTS`, `BASHOPTS`, `ZDOTDIR`, `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_DIRS`, `XDG_CONFIG_DIRS`, `IFS`; prefixes `LD_`, `DYLD_`, `BASH_FUNC_`, `STAND_`.
+- Warned: `PATH`, `NODE_OPTIONS`, `PYTHONSTARTUP`, `PYTHONPATH`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`, `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, `NODE_PATH`, `PYTHONHOME`.
+- Matching is ASCII case-insensitive.
+- Applied in `stand set` and on injection in `shell` / `exec` (after the environment is resolved, before confirmation and decryption), so a hand-edited `.stand.toml` is covered too. Blocked names are an error; warned names print one warning line.
 
 This is a speed bump, not a complete defense.
 
@@ -72,8 +73,10 @@ Errors:
 
 Inside `stand shell <env>` (bash, zsh, fish) the subshell defines a `stand` shell function. For `set` / `unset` it captures fd 3 from the binary and evals the quoted lines.
 
-- Only changes that affect the active environment are applied, respecting `common`, `extends` and `${VAR}` interpolation.
-- If `unset` makes the key fall back to an inherited **encrypted** value, Stand asks to unlock and applies the decrypted value.
+- Active only when `STAND_ACTIVE=1`, `STAND_ENVIRONMENT`, `STAND_PROJECT_ROOT`, `STAND_SHELL_FD=3` and a valid `STAND_SHELL_KIND` are set and the project directory matches `STAND_PROJECT_ROOT`.
+- The effective value of the key for the active environment (`common`, `extends` and `${VAR}` interpolation resolved) is captured before and after the write. Unchanged: nothing is sent. Removed: `unset`. Plain: `set`.
+- Encrypted result: if it is the ciphertext this `set` just wrote, the plaintext is applied without an unlock. Otherwise (for example `unset` falls back to an inherited encrypted value) Stand asks to unlock and applies the decrypted value. If decryption fails, the variable is unset and a warning asks the user to restart the stand shell.
+- A failure to write to the shell is only a warning; the configuration was already written and the exit code stays 0.
 - Limits: calling the binary by full path bypasses the function; other shells have no reflect.
 - Temp dirs for zsh/bash init are random and `0700`.
 
@@ -84,9 +87,9 @@ Inside `stand shell <env>` (bash, zsh, fish) the subshell defines a `stand` shel
 ### Encryption commands
 
 - `stand encrypt enable [--touch-id]`: asks a new passphrase twice; creates the identity files; no `.stand.keys`.
-- `stand encrypt migrate`: wraps the existing `.stand.keys` with a new passphrase into the identities dir, verifies, overwrites and deletes `.stand.keys`. Values untouched.
-- `stand encrypt add-touch-id`: needs `age-plugin-se` (`brew install age-plugin-se`), macOS 14+ with Secure Enclave. Unlocks with the passphrase once.
-- `stand encrypt disable`: decrypts all values, removes `[encryption]` and the identity files.
+- `stand encrypt migrate`: wraps the existing `.stand.keys` with a new passphrase into the identities dir, verifies, overwrites and deletes `.stand.keys`. Values untouched. Refuses if `<public_key>.age` already exists, and if `.stand.keys` is a symlink or has extra hard links.
+- `stand encrypt add-touch-id`: needs `age-plugin-se` (`brew install age-plugin-se`), macOS 14+ with Secure Enclave. Unlocks with the passphrase once and requires an exact project binding. `.se-identity` may only contain `se` plugin identities.
+- `stand encrypt disable`: decrypts all values and removes `[encryption]`. Identity files are deleted only after an unlock that verified the project binding; otherwise they are kept and their paths are printed.
 - `stand init --encrypt` = `enable` without Touch ID.
 
 ## 5. File Layout
@@ -103,16 +106,20 @@ Every decryption (`get`, `exec`, `shell`, `encrypt disable`, unset fallback) req
 
 Order:
 
-1. `STAND_PRIVATE_KEY`, only with `CI=true`/`1` or `STAND_KEY_SOURCE=env`.
-2. Legacy `.stand.keys` (works, prints a deprecation warning).
+1. `STAND_PRIVATE_KEY`, only with `CI=true`/`1` or `STAND_KEY_SOURCE=env`. Set without either, Stand refuses with an error.
+2. Legacy `.stand.keys` (works, prints a deprecation warning), used only when no wrapped identity exists.
 3. Touch ID, if set up, `age-plugin-se` is on `PATH` and `STAND_UNLOCK` is not `passphrase`. Falls back to the passphrase on failure.
 4. Passphrase, 3 attempts.
 
 The unwrapped key must match the project's public key.
 
+**Project binding.** The wrapped key's plaintext contains `# project: <path>`. On a mismatch, read-only decryption (`get`, `exec`, `shell`, the `unset` fallback) shows both paths and asks for explicit confirmation for that single run. Operations that write or delete key material (`add-touch-id`, `migrate`, the identity deletion of `disable`) require an exact match and never ask.
+
+**Prompt text.** Banner and prompts are sanitized: control characters are escaped, bidirectional and zero-width characters are shown as escapes, and long fields keep their head and tail. The banner shows the resolved `age-plugin-se` path before Touch ID.
+
 ## 7. Pinning
 
-`stand set --encrypt` warns if the project's public key matches no local identity, which detects a swapped key. Same-user forgery is possible, so this is a speed bump.
+`stand set --encrypt` warns (without blocking) if the project's public key matches no local identity and there is no `.stand.keys`, which detects a swapped key; the value may only be decryptable by someone else, so check `[encryption].public_key`. Same-user forgery is possible, so this is a speed bump.
 
 ## 8. Breaking Changes
 

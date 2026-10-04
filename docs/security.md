@@ -57,6 +57,8 @@ stand encrypt migrate
 
 This wraps the existing private key with a new passphrase, stores it in the identities directory, verifies the result, then overwrites and deletes `.stand.keys`. Encrypted values in `.stand.toml` are **not** touched.
 
+`migrate` refuses to run if `<public_key>.age` already exists (it never overwrites an identity), and if `.stand.keys` is a symlink or has extra hard links (overwriting it would destroy another file).
+
 Afterwards, check that no copy of `.stand.keys` remains in backups or in git history.
 
 ### Touch ID setup (macOS 14+ with Secure Enclave)
@@ -82,12 +84,25 @@ Under `$XDG_CONFIG_HOME/stand/identities/` (default `~/.config/stand/identities/
 
 ### Unlock order
 
-1. `STAND_PRIVATE_KEY` (only with `CI=true`/`CI=1` or `STAND_KEY_SOURCE=env`)
-2. Legacy `.stand.keys` (works, prints a deprecation warning)
+1. `STAND_PRIVATE_KEY`. Only with `CI=true`/`CI=1` or `STAND_KEY_SOURCE=env`. If it is set without one of these, Stand **refuses** with an error (it does not silently ignore it).
+2. Legacy `.stand.keys` (works, prints a deprecation warning). Used only when no wrapped identity for the project exists.
 3. Touch ID (see conditions above)
 4. Passphrase (3 attempts)
 
-The unwrapped key must match the project's public key.
+Steps 3 and 4 need an interactive terminal. The unwrapped key must match the project's public key.
+
+#### Project binding
+
+The wrapped key's plaintext contains a line `# project: <path>` with the project directory it was created for. When you unlock, Stand compares it with the current project directory.
+
+- **Read-only decryption** (`get`, `exec`, `shell`, the `unset` fallback): on a mismatch Stand shows both paths and asks for explicit confirmation, for that single run only.
+- **Operations that write or delete key material** (`add-touch-id`, `migrate`, and the identity deletion of `disable`) require an exact match. They refuse on a mismatch and do not ask.
+
+#### What the prompt shows
+
+The banner names the command, the number of secrets and the environment. Before Touch ID it also shows the resolved path of the `age-plugin-se` binary that will run, so you can cancel if it is not the plugin you installed. `.se-identity` files may only contain `se` plugin identities; any other plugin name is refused.
+
+All text taken from files, environment or plugins (command lines, paths, plugin messages) is sanitized before it is printed: control characters are escaped, and bidirectional and zero-width characters are shown as `\u{...}` escapes. Long fields keep their head and tail, with the middle summarized, so neither end can hide content.
 
 ### Disabling
 
@@ -95,17 +110,19 @@ The unwrapped key must match the project's public key.
 stand encrypt disable
 ```
 
-Decrypts all values, removes `[encryption]` from `.stand.toml` and deletes the identity files. This needs an unlock.
+Asks for confirmation, decrypts all values and removes `[encryption]` from `.stand.toml`. This needs an unlock.
+
+The identity files are deleted only after an unlock that verified the project binding. If the binding was not verified (for example you confirmed a mismatch), Stand keeps the files and prints their paths so you can delete them yourself.
 
 ## Variable Name Guards
 
-Names must match `^[A-Za-z_][A-Za-z0-9_]*$`. The guards apply to `stand set` and to injection in `stand shell` / `stand exec`.
+Names must match `^[A-Za-z_][A-Za-z0-9_]*$`. Matching is ASCII case-insensitive (`bash_env` is refused like `BASH_ENV`). The guards apply to `stand set` and to injection in `stand shell` / `stand exec`. `shell` and `exec` check the resolved variable names before any confirmation or decryption: a blocked name stops the command with an error that lists the names; a warned name prints one warning line to stderr. Removing a risky name with `stand unset` is always allowed.
 
 **Refused:**
-`BASH_ENV`, `ENV`, `PROMPT_COMMAND`, `PS0` to `PS4`, `SHELLOPTS`, `BASHOPTS`, `ZDOTDIR`, `HOME`, `XDG_CONFIG_HOME`, `IFS`, and any name starting with `LD_`, `DYLD_`, `BASH_FUNC_` or `STAND_`.
+`BASH_ENV`, `ENV`, `PROMPT_COMMAND`, `PS0` to `PS4`, `SHELLOPTS`, `BASHOPTS`, `ZDOTDIR`, `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_DIRS`, `XDG_CONFIG_DIRS`, `IFS`, and any name starting with `LD_`, `DYLD_`, `BASH_FUNC_` or `STAND_`.
 
 **Warned:**
-`PATH`, `NODE_OPTIONS`, `PYTHONSTARTUP`, `PYTHONPATH`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`.
+`PATH`, `NODE_OPTIONS`, `PYTHONSTARTUP`, `PYTHONPATH`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`, `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, `NODE_PATH`, `PYTHONHOME`.
 
 Reserved keys (`description`, `extends`, `color`, `requires_confirmation`) cannot be set or unset as variables.
 
@@ -119,7 +136,7 @@ env:
   STAND_PRIVATE_KEY: ${{ secrets.STAND_PRIVATE_KEY }}
 ```
 
-Never export `STAND_PRIVATE_KEY` in an interactive shell profile. Outside CI it is ignored unless `STAND_KEY_SOURCE=env` is set, and a profile export would put the key in every process you start.
+Never export `STAND_PRIVATE_KEY` in an interactive shell profile. Outside CI, Stand refuses to run with it set unless `STAND_KEY_SOURCE=env` is also set, and a profile export would put the key in every process you start.
 
 ## Sandbox Recommendation
 
@@ -150,6 +167,6 @@ Stated honestly:
 - **Secrets in use are exposed.** Measured: once secrets are in an environment, any process of the same user can read them while the process lives (`ps -wwE -p <pid>` showed the environment of a Homebrew-installed fish). Stand protects secrets at rest and makes each decryption a human act. It cannot hide secrets from the process that uses them.
   - Do not start AI agents inside a `stand shell`.
   - Prefer `stand exec` for short-lived commands.
-- **Key pinning is a speed bump.** `stand set --encrypt` warns if the project's public key matches no local identity, which detects a swapped key. A same-user attacker can forge a local identity.
-- **Reflect in `stand shell`** evals quoted lines produced by the `stand` binary. Calling the binary by full path bypasses the shell function (no reflect).
+- **Key pinning is a speed bump.** `stand set --encrypt` warns (it does not block) if the project's public key matches no local identity and there is no `.stand.keys`, which detects a swapped key; the value may then be decryptable only by someone else, so check `[encryption].public_key`. A same-user attacker can forge a local identity.
+- **Reflect in `stand shell`** evals quoted lines produced by the `stand` binary. Calling the binary by full path bypasses the shell function (no reflect). If an `unset` falls back to an inherited encrypted value and it cannot be decrypted, the variable is removed from the shell and a warning asks you to restart the stand shell.
 - **Same-user file access.** An agent that can read your files can read the passphrase-wrapped key. It is protected by the passphrase strength only. Use a strong passphrase and the sandbox above.
