@@ -48,10 +48,9 @@ fn test_exec_warns_on_path_but_runs() {
 #[test]
 fn test_shell_validation_refuses_blocked_variables() {
     let dir = project("LD_PRELOAD = \"/tmp/x.so\"\nbash_env = \"/tmp/x\"\n");
-    let err =
-        validate_shell_environment(dir.path(), "dev", true, Some("/bin/sh".to_string()))
-            .unwrap_err()
-            .to_string();
+    let err = validate_shell_environment(dir.path(), "dev", true, Some("/bin/sh".to_string()))
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("LD_PRELOAD"), "{err}");
     assert!(err.contains("bash_env"), "{err}");
     assert!(err.contains("inject code"), "{err}");

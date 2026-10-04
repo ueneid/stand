@@ -139,11 +139,7 @@ pub(crate) fn reflect_context_for(project_dir: &Path) -> Option<ReflectContext> 
 }
 
 /// The effective value of `key` in `environment` (inheritance and interpolation applied).
-pub(crate) fn effective_value(
-    project_dir: &Path,
-    environment: &str,
-    key: &str,
-) -> Option<String> {
+pub(crate) fn effective_value(project_dir: &Path, environment: &str, key: &str) -> Option<String> {
     let config = loader::load_config_toml_with_inheritance(project_dir).ok()?;
     config
         .environments
