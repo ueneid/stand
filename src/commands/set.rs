@@ -11,6 +11,7 @@ use toml_edit::DocumentMut;
 
 use crate::config::{loader, ConfigError};
 use crate::crypto::{encrypt_value, CryptoError};
+use crate::environment::safety::{self, VariableRisk};
 
 /// Set a variable in the configuration file.
 ///
@@ -23,6 +24,23 @@ pub fn set_variable(
     value: Option<String>,
     encrypt: bool,
 ) -> Result<(), SetCommandError> {
+    // Validate the variable name before touching the configuration
+    if !safety::is_valid_variable_name(key) {
+        return Err(SetCommandError::InvalidVariableName(key.to_string()));
+    }
+    if safety::is_reserved_key(key) {
+        return Err(SetCommandError::ReservedKey(key.to_string()));
+    }
+    match safety::classify_variable(key) {
+        VariableRisk::Blocked => return Err(SetCommandError::BlockedVariable(key.to_string())),
+        VariableRisk::Warn => eprintln!(
+            "{} {} can change how programs behave or load code; make sure you trust this value",
+            "warning:".yellow(),
+            key
+        ),
+        VariableRisk::Safe => {}
+    }
+
     // Load configuration
     let config_path = project_dir.join(".stand.toml");
     let config = loader::load_config_toml(project_dir)?;
@@ -136,6 +154,17 @@ fn update_toml_variable(
 pub enum SetCommandError {
     #[error("Environment not found: {0}")]
     EnvironmentNotFound(String),
+
+    #[error("Invalid variable name: {0} (use letters, digits and underscores; do not start with a digit)")]
+    InvalidVariableName(String),
+
+    #[error(
+        "'{0}' is an environment setting, not a variable. Edit .stand.toml directly to change it."
+    )]
+    ReservedKey(String),
+
+    #[error("'{0}' is blocked: it can inject code into the shell that loads these variables")]
+    BlockedVariable(String),
 
     #[error("Value is required when not encrypting")]
     ValueRequired,
@@ -286,5 +315,54 @@ description = "Development"
             !content.contains("secret-value"),
             "Plain value should not appear in config file"
         );
+    }
+
+    fn write_basic(dir: &Path) {
+        fs::write(
+            dir.join(".stand.toml"),
+            "version = \"1.0\"\n\n[environments.dev]\ndescription = \"Development\"\n",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_set_reserved_key_rejected() {
+        let dir = tempdir().unwrap();
+        write_basic(dir.path());
+        let r = set_variable(dir.path(), "dev", "description", Some("x".into()), false);
+        assert!(matches!(r, Err(SetCommandError::ReservedKey(_))));
+    }
+
+    #[test]
+    fn test_set_blocked_variables_rejected() {
+        let dir = tempdir().unwrap();
+        write_basic(dir.path());
+        for k in ["BASH_ENV", "LD_PRELOAD"] {
+            let r = set_variable(dir.path(), "dev", k, Some("x".into()), false);
+            assert!(matches!(r, Err(SetCommandError::BlockedVariable(_))), "{k}");
+        }
+        let content = fs::read_to_string(dir.path().join(".stand.toml")).unwrap();
+        assert!(!content.contains("BASH_ENV"));
+    }
+
+    #[test]
+    fn test_set_warned_variable_allowed() {
+        let dir = tempdir().unwrap();
+        write_basic(dir.path());
+        let r = set_variable(dir.path(), "dev", "PATH", Some("/bin".into()), false);
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn test_set_invalid_variable_name_rejected() {
+        let dir = tempdir().unwrap();
+        write_basic(dir.path());
+        for k in ["1BAD", "A-B"] {
+            let r = set_variable(dir.path(), "dev", k, Some("x".into()), false);
+            assert!(
+                matches!(r, Err(SetCommandError::InvalidVariableName(_))),
+                "{k}"
+            );
+        }
     }
 }
