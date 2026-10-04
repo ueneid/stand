@@ -83,6 +83,7 @@ stand init [OPTIONS]
 
 Options:
   -f, --force    Overwrite existing configuration file
+      --encrypt  Also enable encryption (same as `stand encrypt enable`, without Touch ID)
 ```
 
 **Behavior:**
@@ -115,6 +116,10 @@ Options:
 - Shows environment indicator in prompt (if configured)
 - Environment variables persist only within the shell session
 - Detects and prevents nested shells by default (configurable via `nested_shell_behavior`)
+- Encrypted values are decrypted once at start (requires [unlock](#unlocking-encrypted-values))
+- `stand set` / `stand unset` update the running shell (see [Shell Reflect](#shell-reflect))
+- Refuses to inject blocked variable names (see [`set`](#set))
+- Secrets in the shell are readable by any process of your user. Do not start AI agents inside it; prefer `stand exec`
 
 **Implementation Status:** ✅ Implemented
 
@@ -133,6 +138,10 @@ Arguments:
 Options:
   -y, --yes      Skip confirmation prompt for environments that require it
 ```
+
+**Notes:**
+- Encrypted values are decrypted once per command (requires [unlock](#unlocking-encrypted-values)).
+- Blocked variable names are refused (see [`set`](#set)).
 
 **Examples:**
 ```bash
@@ -219,43 +228,121 @@ DATABASE_URL=postgres://localhost/dev
 - Shows both Stand marker variables and user-defined variables by default
 - Use `--stand-only` or `--user-only` to filter output
 - JSON output available for scripting
+- Reads values from the current shell's environment. It does not decrypt anything and needs no unlock
 
 **Implementation Status:** ✅ Implemented
 
 ---
 
 ### `set`
-Set an environment variable in the specified or current environment.
+Set a variable in an environment of `.stand.toml`.
 
 ```bash
-stand set <NAME> <VALUE> [OPTIONS]
+stand set <ENVIRONMENT> <KEY> [VALUE] [OPTIONS]
 
 Arguments:
-  <NAME>   Variable name
-  <VALUE>  Variable value
+  <ENVIRONMENT>  Environment name
+  <KEY>          Variable name
+  [VALUE]        Variable value (if omitted with --encrypt, prompts for input)
 
 Options:
-  -e, --env <ENVIRONMENT>  Target environment (default: current)
+  -e, --encrypt  Encrypt the value before storing
 ```
 
-**Implementation Status:** 🚧 Planned
+**Behavior:**
+- Names must match `^[A-Za-z_][A-Za-z0-9_]*$`.
+- Refuses reserved keys (`description`, `extends`, `color`, `requires_confirmation`).
+- Refuses names that could plant hooks in your shell (`BASH_ENV`, `ENV`, `PROMPT_COMMAND`, `PS0`-`PS4`, `SHELLOPTS`, `BASHOPTS`, `ZDOTDIR`, `HOME`, `XDG_CONFIG_HOME`, `IFS`, and prefixes `LD_`, `DYLD_`, `BASH_FUNC_`, `STAND_`).
+- Warns for `PATH`, `NODE_OPTIONS`, `PYTHONSTARTUP`, `PYTHONPATH`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`.
+- `--encrypt` needs only the project's public key. It does not unlock anything. It warns if the public key matches no local identity (possible swapped key).
+- Inside `stand shell`, the change is applied to the current shell immediately (see [Shell Reflect](#shell-reflect)).
+
+See [Security Guide](security.md#variable-name-guards) for the reasons.
+
+**Implementation Status:** ✅ Implemented
 
 ---
 
 ### `unset`
-Remove an environment variable from the specified or current environment.
+Remove a variable from an environment of `.stand.toml`.
 
 ```bash
-stand unset <NAME> [OPTIONS]
+stand unset <ENVIRONMENT> <KEY>
 
 Arguments:
-  <NAME>  Variable name to remove
-
-Options:
-  -e, --env <ENVIRONMENT>  Target environment (default: current)
+  <ENVIRONMENT>  Environment name
+  <KEY>          Variable name to remove
 ```
 
-**Implementation Status:** 🚧 Planned
+**Behavior:**
+- Removes the key from `[environments.<ENVIRONMENT>]`. Formatting and file permissions are preserved.
+- Fails if the environment does not exist.
+- Fails if the key is not in that table. The error hints when the key lives in `[common]` or is inherited through `extends`.
+- Reserved keys (`description`, `extends`, `color`, `requires_confirmation`) cannot be unset.
+- Inside `stand shell`, the change is applied to the current shell immediately. If the key falls back to an inherited encrypted value, Stand asks you to unlock and applies the decrypted value.
+
+**Examples:**
+```bash
+stand unset dev DEBUG
+```
+
+**Implementation Status:** ✅ Implemented
+
+---
+
+### `get`
+Print the value of a variable. Encrypted values are decrypted (requires [unlock](#unlocking-encrypted-values)).
+
+```bash
+stand get <ENVIRONMENT> <KEY>
+```
+
+---
+
+### `encrypt`
+Manage encryption of values. See the [Security Guide](security.md) for the threat model.
+
+```bash
+stand encrypt enable [--touch-id]
+stand encrypt migrate
+stand encrypt add-touch-id
+stand encrypt disable
+```
+
+- **`enable`**: Creates a project key pair and stores the private key wrapped by a new passphrase (asked twice) in the identities directory. No `.stand.keys` is created. With `--touch-id` it also wraps the key to a Secure Enclave key (see `add-touch-id` for requirements). `stand init --encrypt` is the same as `enable` without Touch ID.
+- **`migrate`**: Moves an existing `.stand.keys` into the identities directory, wrapped by a new passphrase. It verifies the result, then overwrites and deletes `.stand.keys`. Encrypted values are not changed.
+- **`add-touch-id`**: Adds Touch ID unlock. Requires `brew install age-plugin-se` and macOS 14+ with a Secure Enclave. Unlocks with the passphrase once.
+- **`disable`**: Decrypts all values, removes `[encryption]` from `.stand.toml` and removes the identity files. Requires unlock.
+
+The passphrase identity is your backup if the Mac is lost. The Secure Enclave key cannot leave the device.
+
+Identity files live under `$XDG_CONFIG_HOME/stand/identities/` (default `~/.config/stand/identities/`, directory `0700`, files `0600`):
+`<public_key>.age`, and with Touch ID also `<public_key>.se.age` and `<public_key>.se-identity`.
+
+---
+
+### Unlocking Encrypted Values
+
+Every decryption (`get`, `exec`, `shell`, `encrypt disable`, and the `unset` fallback) needs an interactive terminal (`/dev/tty`). Stand prints which command wants to decrypt how many secrets for which environment, then asks for Touch ID or the passphrase. Never approve a prompt you did not start.
+
+Unlock order:
+
+1. `STAND_PRIVATE_KEY` (only with `CI=true`/`1` or `STAND_KEY_SOURCE=env`)
+2. Legacy `.stand.keys` (works, prints a deprecation warning; run `stand encrypt migrate`)
+3. Touch ID (if set up, `age-plugin-se` is on `PATH`, and `STAND_UNLOCK` is not `passphrase`; falls back to the passphrase on failure)
+4. Passphrase (3 attempts)
+
+The unwrapped key must match the project's public key. See [CI](security.md#ci) for non-interactive use.
+
+---
+
+### Shell Reflect
+
+Inside `stand shell <env>` (bash, zsh, fish), `stand set` and `stand unset` update the current shell immediately. The subshell defines a `stand` shell function that reads the changes from the binary through fd 3 and applies them with strictly quoted `export`/`unset` (fish: `set -gx`/`set -e`) lines. No temp files hold the values.
+
+- Only changes that affect the active environment are applied (`common`, `extends` and `${VAR}` interpolation are respected).
+- Calling the binary by its full path bypasses the function, so nothing is reflected.
+- Other shells have no reflect. Restart `stand shell` to see changes.
 
 ## Error Handling
 
@@ -298,3 +385,7 @@ Stand respects the following environment variables:
 - `STAND_CONFIG`: Override default configuration file path
 - `STAND_NO_COLOR`: Disable colored output
 - `STAND_QUIET`: Suppress non-error output
+- `STAND_PRIVATE_KEY`: Private key for non-interactive unlock. Used only when `CI=true`/`1` or `STAND_KEY_SOURCE=env`. Never export it in an interactive shell profile
+- `STAND_KEY_SOURCE`: Set to `env` to allow `STAND_PRIVATE_KEY` outside CI
+- `STAND_UNLOCK`: Set to `passphrase` to skip Touch ID
+- `XDG_CONFIG_HOME`: Base for the identities directory (default `~/.config`)

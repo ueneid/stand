@@ -83,6 +83,15 @@ DEBUG = "false"
 ### Variable Definitions
 All other keys in an environment section are treated as environment variables.
 
+### Variable Name Rules
+- Names must match `^[A-Za-z_][A-Za-z0-9_]*$`.
+- Reserved keys (`description`, `extends`, `color`, `requires_confirmation`) cannot be used as variables.
+- **Refused** (they can plant hooks in your interactive shell): `BASH_ENV`, `ENV`, `PROMPT_COMMAND`, `PS0`-`PS4`, `SHELLOPTS`, `BASHOPTS`, `ZDOTDIR`, `HOME`, `XDG_CONFIG_HOME`, `IFS`, and names starting with `LD_`, `DYLD_`, `BASH_FUNC_` or `STAND_`.
+- **Warned**: `PATH`, `NODE_OPTIONS`, `PYTHONSTARTUP`, `PYTHONPATH`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`.
+- The rules apply to `stand set` and to injection in `stand shell` / `stand exec`.
+
+See the [Security Guide](security.md#variable-name-guards).
+
 ## Variable Interpolation
 
 Use `${VAR_NAME}` syntax to reference system environment variables:
@@ -167,3 +176,6 @@ LOG_LEVEL = "warn"
 - **File permissions**: Set appropriate permissions (0600) for files containing secrets
 - **Variable interpolation**: Use system environment variables for sensitive values
 - **Masked logging**: Sensitive values should never be printed in plain text
+- **Encryption**: `[encryption].public_key` holds the project's public key. The private key is not stored in the project. It lives under `$XDG_CONFIG_HOME/stand/identities/` (default `~/.config/stand/identities/`), wrapped by a passphrase and optionally by Touch ID. A legacy `.stand.keys` file is deprecated; run `stand encrypt migrate`.
+
+See the [Security Guide](security.md) for the threat model, setup, CI use and residual risks.

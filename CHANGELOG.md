@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Breaking
+
+- Decryption now requires an interactive terminal (`/dev/tty`).
+- `STAND_PRIVATE_KEY` is only used with `CI=true`/`1` or `STAND_KEY_SOURCE=env`.
+- `.stand.keys` is deprecated. It still works but prints a warning. Run `stand encrypt migrate`.
+- `stand env` no longer decrypts. It reads values from the current shell's environment.
+- `stand set` refuses reserved keys (`description`, `extends`, `color`, `requires_confirmation`) and blocked variable names.
+
+### Added
+
+- `stand unset <environment> <key>` removes a variable from an environment.
+- Shell reflect: inside `stand shell` (bash, zsh, fish), `stand set` and `stand unset` update the current shell immediately.
+- `stand encrypt enable [--touch-id]`, `stand encrypt migrate`, `stand encrypt add-touch-id`, and an updated `stand encrypt disable`.
+- Touch ID unlock through a Secure Enclave key (`age-plugin-se`, macOS 14+).
+- Variable name guards: names must match `^[A-Za-z_][A-Za-z0-9_]*$`. Hook-planting names are refused. Risky names (`PATH`, `NODE_OPTIONS`, ...) produce a warning.
+- `stand set --encrypt` warns if the project's public key matches no local identity.
+- `docs/security.md`: threat model, setup, migration, CI, sandbox advice, residual risks.
+
+### Changed
+
+- The private key is stored under `$XDG_CONFIG_HOME/stand/identities/` (default `~/.config/stand/identities/`), wrapped by a passphrase and optionally Touch ID. The format of encrypted values and `[encryption].public_key` is unchanged.
+- Unlock order: `STAND_PRIVATE_KEY` (CI only), legacy `.stand.keys`, Touch ID, passphrase.
+- `stand init --encrypt` no longer writes `.stand.keys`.
+- Temp directories for bash/zsh init are random and `0700`.
+
+### Security
+
+- Each decryption is a deliberate human act and shows which command decrypts how many secrets for which environment.
+- Config values can no longer set variables such as `BASH_ENV`, `PROMPT_COMMAND`, `LD_*` or `DYLD_*` in the interactive shell.
+- Secrets in use remain readable by any process of the same user. See `docs/security.md`.
+
 ## [0.2.2] - 2026-05-17
 
 ### Changed
