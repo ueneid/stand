@@ -142,10 +142,15 @@ pub fn migrate_encryption_with(
         });
     }
 
+    let identity_path = store::identity_path_in(&ctx.env.config_dir, &public_key);
+    if identity_path.symlink_metadata().is_ok() {
+        return Err(EncryptionCommandError::IdentityAlreadyExists(san_path(
+            &identity_path,
+        )));
+    }
+
     let ui = require_ui(ctx)?;
     let passphrase = crypto_enable::prompt_new_passphrase(ui.as_ref())?;
-    let identity_path = store::identity_path_in(&ctx.env.config_dir, &public_key);
-    let existed = identity_path.exists();
     store::write_passphrase_identity_in(
         &ctx.env.config_dir,
         &public_key,
@@ -159,9 +164,7 @@ pub fn migrate_encryption_with(
         &passphrase,
         ctx.env.max_work_factor,
     ) {
-        if !existed {
-            let _ = fs::remove_file(&identity_path);
-        }
+        let _ = fs::remove_file(&identity_path);
         return Err(e.into());
     }
     println!(
@@ -438,6 +441,9 @@ pub enum EncryptionCommandError {
     #[error("No passphrase-protected key found at {0}. Run 'stand encrypt migrate' (legacy .stand.keys) or 'stand encrypt enable' first.")]
     IdentityNotFound(String),
 
+    #[error("A passphrase-protected key already exists at {0}; refusing to overwrite it. Move it away first if you really want to migrate again.")]
+    IdentityAlreadyExists(String),
+
     #[error("Touch ID setup failed: {0}. Your passphrase setup is complete; run 'stand encrypt add-touch-id' once the problem is fixed.")]
     TouchIdSetup(String),
 
@@ -672,6 +678,24 @@ mod tests {
         let purpose = DecryptPurpose::new("test", None);
         let out = crate::crypto::decrypt_single_value_with(&enc, &f.project, &purpose, &c).unwrap();
         assert_eq!(out, "s3cret");
+    }
+
+    #[test]
+    fn test_migrate_refuses_when_wrapped_identity_already_exists() {
+        let f = fixture();
+        let (p, _) = legacy_setup(&f, "x");
+        store::ensure_identities_dir_in(&f.config).unwrap();
+        let existing = store::identity_path_in(&f.config, &p);
+        fs::write(&existing, b"precious existing wrap").unwrap();
+        let ui = MockUi::new(vec![Some("pw"), Some("pw")]);
+        let r = migrate_encryption_with(&f.project, &ctx(&f, Some(ui.clone()), true));
+        assert!(matches!(
+            r,
+            Err(EncryptionCommandError::IdentityAlreadyExists(_))
+        ));
+        assert_eq!(fs::read(&existing).unwrap(), b"precious existing wrap");
+        assert!(f.project.join(KEYS_FILE).exists());
+        assert_eq!(ui.prompt_count(), 0, "must refuse before prompting");
     }
 
     #[test]

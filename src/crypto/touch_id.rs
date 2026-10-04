@@ -323,6 +323,7 @@ mod tests {
             let parsed = check_se_recipient(&material.recipient)?;
             assert_eq!(parsed.plugin(), "se");
             assert!(material.identity_file.contains("AGE-PLUGIN-SE-1"));
+            assert_eq!(validate_se_identity_file(&material.identity_file)?.len(), 1);
             let ct = backend.wrap(&material.recipient, b"test plaintext")?;
             assert!(!ct.is_empty());
             Ok(())
