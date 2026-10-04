@@ -78,7 +78,23 @@ See [Configuration Format](docs/configuration.md) for all available settings.
 - **Variable Interpolation**: Reference system environment variables with `${VAR}`
 - **Shell Integration**: Start shell sessions with environment loaded
 - **Command Execution**: Execute commands with specific environment variables
+- **Encrypted Secrets**: age encryption with passphrase or Touch ID unlock
 - **Configuration Validation**: Validate configuration file syntax and structure
+
+## Security
+
+Stand can encrypt secret values with age. The private key is not kept in the project. It is stored in `~/.config/stand/identities/`, wrapped by a passphrase and, on macOS, optionally by Touch ID (Secure Enclave).
+
+- Every decryption needs an interactive terminal and a human unlock (Touch ID or passphrase).
+- Variable names that could plant shell hooks (`BASH_ENV`, `LD_*`, ...) are refused.
+- Secrets in a running shell or command are readable by any process of your user. Do not start AI agents inside `stand shell`.
+
+```bash
+stand init --encrypt              # or: stand encrypt enable --touch-id
+stand encrypt migrate             # move an old .stand.keys to the new scheme
+```
+
+See the [Security Guide](docs/security.md) for the threat model, CI use, and sandbox advice.
 
 ## Examples
 
@@ -96,6 +112,7 @@ Each example includes a complete `.stand.toml` configuration and usage instructi
 ### User Documentation
 - **[CLI Commands](docs/cli.md)** - Complete command reference
 - **[Configuration Format](docs/configuration.md)** - Configuration file syntax and examples
+- **[Security Guide](docs/security.md)** - Encryption, Touch ID, threat model, and CI use
 
 ### Developer Documentation
 - **[Architecture Overview](docs/architecture.md)** - High-level system design
@@ -141,7 +158,8 @@ cargo fmt && cargo clippy -- -D warnings && cargo test
 - ✅ `exec` - Execute command with environment variables
 - ✅ `show` - Show environment variables with source attribution
 - ✅ `env` - Show active environment variables in current subshell
-- 🚧 `set`/`unset` - Modify environment variables (planned)
+- ✅ `set`/`unset` - Modify environment variables (updates the running `stand shell` immediately)
+- ✅ `encrypt` - Enable, migrate, add Touch ID, or disable encryption
 
 ## Contributing
 
