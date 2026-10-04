@@ -1,6 +1,8 @@
 use clap::Parser;
 use stand::cli::commands::{Cli, Commands, EncryptCommands};
-use stand::commands::{current, encrypt, env, exec, get, init, list, set, shell, show, validate};
+use stand::commands::{
+    current, encrypt, env, exec, get, init, list, set, shell, show, unset, validate,
+};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -79,6 +81,16 @@ fn main() -> anyhow::Result<()> {
                 Ok(output) => {
                     println!("{}", output);
                 }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Unset { environment, key } => {
+            let current_dir = std::env::current_dir()?;
+            match unset::unset_variable(&current_dir, &environment, &key) {
+                Ok(()) => {}
                 Err(e) => {
                     eprintln!("Error: {}", e);
                     std::process::exit(1);

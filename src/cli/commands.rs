@@ -64,6 +64,13 @@ pub enum Commands {
         #[arg(short, long)]
         encrypt: bool,
     },
+    /// Remove a variable from the configuration file
+    Unset {
+        /// Environment name
+        environment: String,
+        /// Variable name
+        key: String,
+    },
     /// Get a variable value from the configuration
     Get {
         /// Environment name
