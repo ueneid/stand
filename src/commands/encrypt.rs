@@ -59,6 +59,7 @@ pub fn enable_encryption_with(
         &ctx.env.config_dir,
         ui.as_ref(),
         ctx.env.max_work_factor,
+        project_dir,
     )?;
 
     // Add [encryption] section using toml_edit (preserves formatting).
@@ -97,6 +98,7 @@ pub fn enable_encryption_with(
                 ctx.secure_enclave.as_ref(),
                 &identity,
                 &public_key,
+                project_dir,
             )
             .map(|_| ())
         } else {
@@ -159,6 +161,7 @@ pub fn migrate_encryption_with(
         &legacy,
         &passphrase,
         ctx.env.max_work_factor,
+        project_dir,
     )?;
     if let Err(e) = crypto_enable::verify_passphrase_wrap_in(
         &ctx.env.config_dir,
@@ -231,6 +234,7 @@ pub fn add_touch_id_with(
         ctx.secure_enclave.as_ref(),
         &identity,
         &public_key,
+        project_dir,
     )?;
     println!("{} Touch ID enabled", "✓".green());
     Ok(())
@@ -821,6 +825,42 @@ mod tests {
         add_touch_id_with(&f.project, &ctx(&f, Some(ui), true)).unwrap();
         assert!(store::se_identity_path_in(&f.config, &p).exists());
         assert!(store::se_wrapped_path_in(&f.config, &p).exists());
+    }
+
+    #[test]
+    fn test_add_touch_id_in_other_project_is_refused_when_declined() {
+        let f = fixture();
+        let p = enabled(&f);
+        // A second project whose config points at the first project's key.
+        let other = f._tmp.path().join("other");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join(CONFIG_FILE), read_config(&f)).unwrap();
+        let ui = MockUi::new(vec![Some("pw")]);
+        ui.set_confirm(Some(false));
+        let r = add_touch_id_with(&other, &ctx(&f, Some(ui), true));
+        assert!(matches!(
+            r,
+            Err(EncryptionCommandError::Crypto(
+                CryptoError::ProjectMismatch { .. }
+            ))
+        ));
+        assert!(!store::se_wrapped_path_in(&f.config, &p).exists());
+    }
+
+    #[test]
+    fn test_migrate_binds_identity_to_project() {
+        let f = fixture();
+        let (p, _) = legacy_setup(&f, "x");
+        let ui = MockUi::new(vec![Some("pw"), Some("pw")]);
+        migrate_encryption_with(&f.project, &ctx(&f, Some(ui), true)).unwrap();
+        let bytes = fs::read(store::identity_path_in(&f.config, &p)).unwrap();
+        let plain =
+            store::unwrap_with_passphrase(&bytes, &SecretString::from("pw".to_string()), Some(WF))
+                .unwrap();
+        assert_eq!(
+            store::parse_project_binding(&plain).as_deref(),
+            fs::canonicalize(&f.project).unwrap().to_str()
+        );
     }
 
     #[test]

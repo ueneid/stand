@@ -15,6 +15,10 @@ pub struct MockUi {
     passphrases: Mutex<VecDeque<Option<String>>>,
     pub shown: Mutex<Vec<String>>,
     pub prompts: Mutex<Vec<String>>,
+    /// Answer returned by `confirm` (`None` simulates "cannot ask").
+    pub confirm_answer: Mutex<Option<bool>>,
+    /// Every question passed to `confirm`.
+    pub confirms: Mutex<Vec<String>>,
 }
 
 impl MockUi {
@@ -29,7 +33,18 @@ impl MockUi {
             ),
             shown: Mutex::new(vec![]),
             prompts: Mutex::new(vec![]),
+            confirm_answer: Mutex::new(Some(true)),
+            confirms: Mutex::new(vec![]),
         })
+    }
+
+    /// Sets the answer returned by `confirm`.
+    pub fn set_confirm(&self, answer: Option<bool>) {
+        *self.confirm_answer.lock().unwrap() = answer;
+    }
+
+    pub fn confirm_count(&self) -> usize {
+        self.confirms.lock().unwrap().len()
     }
 
     pub fn shown_messages(&self) -> Vec<String> {
@@ -56,8 +71,9 @@ impl UnlockUi for MockUi {
             .map(SecretString::from)
     }
 
-    fn confirm(&self, _message: &str) -> Option<bool> {
-        Some(true)
+    fn confirm(&self, message: &str) -> Option<bool> {
+        self.confirms.lock().unwrap().push(message.to_string());
+        *self.confirm_answer.lock().unwrap()
     }
 }
 

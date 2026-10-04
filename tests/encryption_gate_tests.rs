@@ -52,6 +52,7 @@ fn project(wrapped: bool, legacy: bool) -> Project {
             &identity,
             &SecretString::from("test-passphrase".to_string()),
             Some(8),
+            &dir,
         )
         .unwrap();
     }

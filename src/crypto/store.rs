@@ -49,16 +49,47 @@ fn created_timestamp() -> String {
     )
 }
 
-/// Builds the plaintext age identity file for an identity.
+/// Canonical absolute form of `project_dir` as stored in the `# project:` line.
 ///
-/// The result is compatible with `age -d -i` once decrypted.
-pub fn identity_file_contents(identity: &x25519::Identity) -> SecretString {
-    SecretString::from(format!(
-        "# created: {}\n# public key: {}\n{}\n",
+/// Fails when the directory cannot be resolved or the path contains control
+/// characters (which could forge extra lines in the identity file).
+pub fn canonical_project_dir(project_dir: &Path) -> Result<String, CryptoError> {
+    let canonical = fs::canonicalize(project_dir)?;
+    let text = canonical.to_str().ok_or_else(|| {
+        CryptoError::StoreError("project directory path is not valid UTF-8".to_string())
+    })?;
+    if text.chars().any(char::is_control) {
+        return Err(CryptoError::StoreError(
+            "project directory path contains control characters".to_string(),
+        ));
+    }
+    Ok(text.to_string())
+}
+
+/// Builds the plaintext age identity file for an identity bound to `project_dir`.
+///
+/// The `# project:` line lives inside the wrapped plaintext, so it is
+/// authenticated by the wrapping and cannot be altered without the passphrase
+/// or Touch ID. The result is compatible with `age -d -i` once decrypted.
+pub fn identity_file_contents(
+    identity: &x25519::Identity,
+    project_dir: &Path,
+) -> Result<SecretString, CryptoError> {
+    Ok(SecretString::from(format!(
+        "# created: {}\n# public key: {}\n# project: {}\n{}\n",
         created_timestamp(),
         identity.to_public(),
+        canonical_project_dir(project_dir)?,
         identity.to_string().expose_secret()
-    ))
+    )))
+}
+
+/// Returns the project directory recorded in decrypted identity file contents.
+pub fn parse_project_binding(contents: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(contents).ok()?;
+    text.lines()
+        .find_map(|line| line.strip_prefix("# project: "))
+        .map(str::to_string)
 }
 
 /// Extracts the X25519 identity from decrypted identity file contents.
@@ -296,10 +327,12 @@ pub fn write_passphrase_identity_in(
     identity: &x25519::Identity,
     passphrase: &SecretString,
     work_factor: Option<u8>,
+    project_dir: &Path,
 ) -> Result<PathBuf, CryptoError> {
     validate_public_key(public_key)?;
+    // Resolve the binding first so nothing is written when it fails.
+    let plaintext = identity_file_contents(identity, project_dir)?;
     ensure_identities_dir_in(config_dir)?;
-    let plaintext = identity_file_contents(identity);
     let wrapped = wrap_with_passphrase(
         plaintext.expose_secret().as_bytes(),
         passphrase,
@@ -316,6 +349,7 @@ pub fn write_passphrase_identity(
     identity: &x25519::Identity,
     passphrase: &SecretString,
     work_factor: Option<u8>,
+    project_dir: &Path,
 ) -> Result<PathBuf, CryptoError> {
     write_passphrase_identity_in(
         &config_dir()?,
@@ -323,6 +357,7 @@ pub fn write_passphrase_identity(
         identity,
         passphrase,
         work_factor,
+        project_dir,
     )
 }
 
@@ -504,8 +539,15 @@ mod tests {
         let tmp = tempdir().unwrap();
         let id = x25519::Identity::generate();
         let p = id.to_public().to_string();
-        let path =
-            write_passphrase_identity_in(tmp.path(), &p, &id, &pass("pw"), Some(TEST_WF)).unwrap();
+        let path = write_passphrase_identity_in(
+            tmp.path(),
+            &p,
+            &id,
+            &pass("pw"),
+            Some(TEST_WF),
+            tmp.path(),
+        )
+        .unwrap();
         assert_eq!(path, identity_path_in(tmp.path(), &p));
 
         let bytes = fs::read(&path).unwrap();
@@ -531,8 +573,15 @@ mod tests {
         let tmp = tempdir().unwrap();
         let id = x25519::Identity::generate();
         let p = id.to_public().to_string();
-        let path =
-            write_passphrase_identity_in(tmp.path(), &p, &id, &pass("pw"), Some(TEST_WF)).unwrap();
+        let path = write_passphrase_identity_in(
+            tmp.path(),
+            &p,
+            &id,
+            &pass("pw"),
+            Some(TEST_WF),
+            tmp.path(),
+        )
+        .unwrap();
         let file_mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         let dir_mode = fs::metadata(identities_dir_in(tmp.path()))
             .unwrap()
@@ -548,7 +597,8 @@ mod tests {
         let tmp = tempdir().unwrap();
         let id = x25519::Identity::generate();
         let p = id.to_public().to_string();
-        write_passphrase_identity_in(tmp.path(), &p, &id, &pass("pw"), Some(TEST_WF)).unwrap();
+        write_passphrase_identity_in(tmp.path(), &p, &id, &pass("pw"), Some(TEST_WF), tmp.path())
+            .unwrap();
         let names: Vec<_> = fs::read_dir(identities_dir_in(tmp.path()))
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
@@ -560,8 +610,14 @@ mod tests {
     fn test_rejects_path_traversal_in_public_key() {
         let tmp = tempdir().unwrap();
         let id = x25519::Identity::generate();
-        let r =
-            write_passphrase_identity_in(tmp.path(), "../evil", &id, &pass("pw"), Some(TEST_WF));
+        let r = write_passphrase_identity_in(
+            tmp.path(),
+            "../evil",
+            &id,
+            &pass("pw"),
+            Some(TEST_WF),
+            tmp.path(),
+        );
         assert!(matches!(r, Err(CryptoError::InvalidPublicKey(_))));
     }
 
@@ -570,7 +626,8 @@ mod tests {
         let tmp = tempdir().unwrap();
         let id = x25519::Identity::generate();
         let p = id.to_public().to_string();
-        write_passphrase_identity_in(tmp.path(), &p, &id, &pass("pw"), Some(TEST_WF)).unwrap();
+        write_passphrase_identity_in(tmp.path(), &p, &id, &pass("pw"), Some(TEST_WF), tmp.path())
+            .unwrap();
         fs::write(se_identity_path_in(tmp.path(), &p), "x").unwrap();
 
         let removed = remove_identity_files_in(tmp.path(), &p).unwrap();
@@ -650,6 +707,31 @@ mod tests {
             assert_eq!(fs::read(&victim).unwrap(), b"victim");
             assert_eq!(fs::read(&linked).unwrap(), b"new");
         }
+    }
+
+    #[test]
+    fn test_identity_file_contents_binds_canonical_project_dir() {
+        let tmp = tempdir().unwrap();
+        let id = x25519::Identity::generate();
+        let plain = identity_file_contents(&id, tmp.path()).unwrap();
+        let canonical = fs::canonicalize(tmp.path()).unwrap();
+        assert_eq!(
+            parse_project_binding(plain.expose_secret().as_bytes()).as_deref(),
+            canonical.to_str()
+        );
+        assert!(parse_identity_file_contents(plain.expose_secret().as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn test_identity_file_contents_rejects_missing_project_dir() {
+        let tmp = tempdir().unwrap();
+        let id = x25519::Identity::generate();
+        assert!(identity_file_contents(&id, &tmp.path().join("nope")).is_err());
+    }
+
+    #[test]
+    fn test_parse_project_binding_absent() {
+        assert_eq!(parse_project_binding(b"# public key: x\n"), None);
     }
 
     #[test]

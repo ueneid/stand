@@ -21,7 +21,10 @@ pub use keys::{generate_key_pair, KeyPair};
 pub use touch_id::{RealSecureEnclave, SeKeyMaterial, SecureEnclaveBackend};
 pub use tty::TtyUi;
 pub use ui::{DecryptPurpose, UnlockUi};
-pub use unlock::{unlock_project_identity, unlock_project_identity_with, UnlockContext, UnlockEnv};
+pub use unlock::{
+    unlock_project_identity, unlock_project_identity_verified_with, unlock_project_identity_with,
+    Binding, UnlockContext, UnlockEnv, Unlocked, VerifiedProject,
+};
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -66,6 +69,9 @@ pub enum CryptoError {
     #[error("The unlocked identity does not match the project public key {expected}")]
     IdentityMismatch { expected: String },
 
+    #[error("This key is bound to project '{bound}' but is being used for '{current}'; refusing to unlock it for this project")]
+    ProjectMismatch { bound: String, current: String },
+
     #[error("Unlock failed: {0}")]
     UnlockFailed(String),
 
@@ -107,7 +113,17 @@ pub fn unlock_for_project_with(
     purpose: &DecryptPurpose,
     ctx: &UnlockContext,
 ) -> Result<age::x25519::Identity, CryptoError> {
-    unlock_project_identity_with(
+    unlock_for_project_verified_with(project_dir, purpose, ctx).map(|u| u.identity)
+}
+
+/// Like [`unlock_for_project_with`], also reporting whether the identity's
+/// project binding was verified (see [`Binding`]).
+pub fn unlock_for_project_verified_with(
+    project_dir: &Path,
+    purpose: &DecryptPurpose,
+    ctx: &UnlockContext,
+) -> Result<Unlocked, CryptoError> {
+    unlock_project_identity_verified_with(
         project_dir,
         read_project_public_key(project_dir).as_deref(),
         purpose,
@@ -342,6 +358,7 @@ mod tests {
             &identity,
             &SecretString::from("pw".to_string()),
             Some(8),
+            dir.path(),
         )
         .unwrap();
         fs::write(
@@ -414,6 +431,7 @@ mod tests {
             &identity,
             &SecretString::from("pw".to_string()),
             Some(8),
+            project.path(),
         )
         .unwrap();
         fs::write(
@@ -468,6 +486,7 @@ mod tests {
             &identity,
             &SecretString::from("pw".to_string()),
             Some(8),
+            project.path(),
         )
         .unwrap();
         fs::write(

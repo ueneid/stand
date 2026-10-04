@@ -100,6 +100,58 @@ impl UnlockContext {
     }
 }
 
+/// Proof that an unwrapped identity was bound to the project it was unlocked for.
+///
+/// Only the unlock gate can create one. Destructive operations (deleting the
+/// identity files) require it, so they cannot be reached for a key that was
+/// not verified in this run.
+#[derive(Debug)]
+pub struct VerifiedProject {
+    public_key: String,
+}
+
+impl VerifiedProject {
+    /// The public key of the identity that was verified.
+    pub fn public_key(&self) -> &str {
+        &self.public_key
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(public_key: &str) -> Self {
+        Self {
+            public_key: public_key.to_string(),
+        }
+    }
+}
+
+/// How the project binding of an unlocked identity was established.
+#[derive(Debug)]
+pub enum Binding {
+    /// The `# project:` line matched the current project directory.
+    Verified(VerifiedProject),
+    /// The binding did not match (or was missing) and the human explicitly
+    /// confirmed using the key anyway.
+    Confirmed,
+    /// Not a wrapped identity (CI environment key or legacy `.stand.keys`).
+    NotApplicable,
+}
+
+/// Result of a successful unlock.
+pub struct Unlocked {
+    pub identity: x25519::Identity,
+    pub binding: Binding,
+}
+
+impl Unlocked {
+    /// The proof, only when the binding matched cleanly.
+    pub fn verified(&self) -> Option<&VerifiedProject> {
+        match &self.binding {
+            Binding::Verified(v) => Some(v),
+            _ => None,
+        }
+    }
+}
+
 /// Production entry point: unlocks the project identity for `public_key`.
 pub fn unlock_project_identity(
     project_dir: &Path,
@@ -118,7 +170,21 @@ pub fn unlock_project_identity_with(
     purpose: &DecryptPurpose,
     ctx: &UnlockContext,
 ) -> Result<x25519::Identity, CryptoError> {
+    unlock_project_identity_verified_with(project_dir, public_key, purpose, ctx).map(|u| u.identity)
+}
+
+/// [`unlock_project_identity_with`] that also reports the project [`Binding`].
+pub fn unlock_project_identity_verified_with(
+    project_dir: &Path,
+    public_key: Option<&str>,
+    purpose: &DecryptPurpose,
+    ctx: &UnlockContext,
+) -> Result<Unlocked, CryptoError> {
     let env = &ctx.env;
+    let not_applicable = |identity| Unlocked {
+        identity,
+        binding: Binding::NotApplicable,
+    };
 
     // 1. Environment key, only in CI or when explicitly requested.
     if let Some(raw) = &env.private_key {
@@ -130,7 +196,7 @@ pub fn unlock_project_identity_with(
                 "STAND_PRIVATE_KEY environment variable is empty".to_string(),
             ));
         }
-        return keys::parse_private_key(raw.trim());
+        return keys::parse_private_key(raw.trim()).map(not_applicable);
     }
 
     // 2. Legacy plaintext .stand.keys (transitional, no TTY required).
@@ -145,7 +211,7 @@ pub fn unlock_project_identity_with(
     if !any_wrapped && legacy_path.exists() {
         (ctx.warn)(LEGACY_WARNING);
         let key = keys::load_private_key(&legacy_path)?;
-        return keys::parse_private_key(&key);
+        return keys::parse_private_key(&key).map(not_applicable);
     }
     let public_key = public_key.ok_or(CryptoError::NoEncryptionKey)?;
     store::validate_public_key(public_key)?;
@@ -181,7 +247,9 @@ pub fn unlock_project_identity_with(
             ));
         }
         match try_touch_id(ctx, &se_identity, &se_wrapped, ui.clone()) {
-            Ok(identity) => return check_identity(identity, public_key),
+            Ok((identity, bound)) => {
+                return finish_wrapped(identity, bound, public_key, project_dir, ui.as_ref())
+            }
             Err(reason) => ui.show(&format!(
                 "Touch ID unlock failed: {}. Falling back to passphrase.",
                 sanitize_for_terminal(&reason)
@@ -192,8 +260,9 @@ pub fn unlock_project_identity_with(
     // 6. Passphrase.
     if passphrase_file.exists() {
         let ciphertext = std::fs::read(&passphrase_file)?;
-        let identity = unlock_with_passphrase(&ciphertext, ui.as_ref(), env.max_work_factor)?;
-        return check_identity(identity, public_key);
+        let (identity, bound) =
+            unlock_with_passphrase(&ciphertext, ui.as_ref(), env.max_work_factor)?;
+        return finish_wrapped(identity, bound, public_key, project_dir, ui.as_ref());
     }
 
     // 8. Nothing usable.
@@ -210,27 +279,31 @@ fn try_touch_id(
     se_identity: &Path,
     se_wrapped: &Path,
     ui: Arc<dyn UnlockUi>,
-) -> Result<x25519::Identity, String> {
+) -> Result<(x25519::Identity, Option<String>), String> {
     let identity_file = std::fs::read_to_string(se_identity).map_err(|e| e.to_string())?;
     let ciphertext = std::fs::read(se_wrapped).map_err(|e| e.to_string())?;
     let plaintext = ctx
         .secure_enclave
         .unwrap(&identity_file, &ciphertext, ui)
         .map_err(|e| e.to_string())?;
-    store::parse_identity_file_contents(&plaintext).map_err(|e| e.to_string())
+    let identity = store::parse_identity_file_contents(&plaintext).map_err(|e| e.to_string())?;
+    Ok((identity, store::parse_project_binding(&plaintext)))
 }
 
 fn unlock_with_passphrase(
     ciphertext: &[u8],
     ui: &dyn UnlockUi,
     max_work_factor: Option<u8>,
-) -> Result<x25519::Identity, CryptoError> {
+) -> Result<(x25519::Identity, Option<String>), CryptoError> {
     for attempt in 1..=MAX_PASSPHRASE_ATTEMPTS {
         let passphrase: SecretString = ui
             .request_passphrase("Enter passphrase to unlock the stand key:")
             .ok_or_else(|| CryptoError::UnlockFailed("passphrase entry cancelled".to_string()))?;
         match store::unwrap_with_passphrase(ciphertext, &passphrase, max_work_factor) {
-            Ok(plain) => return store::parse_identity_file_contents(&plain),
+            Ok(plain) => {
+                let identity = store::parse_identity_file_contents(&plain)?;
+                return Ok((identity, store::parse_project_binding(&plain)));
+            }
             Err(UnwrapError::WrongPassphrase) => {
                 if attempt < MAX_PASSPHRASE_ATTEMPTS {
                     ui.show("Incorrect passphrase. Try again.");
@@ -245,6 +318,63 @@ fn unlock_with_passphrase(
         "incorrect passphrase ({} attempts)",
         MAX_PASSPHRASE_ATTEMPTS
     )))
+}
+
+/// Checks the identity against the public key and its project binding.
+///
+/// A mismatching or missing `# project:` line is shown to the human, who must
+/// explicitly confirm (default No). The agent-editable `[encryption].public_key`
+/// selects the identity, so this stops a rewritten config from reusing a key
+/// that belongs to another project.
+fn finish_wrapped(
+    identity: x25519::Identity,
+    bound: Option<String>,
+    public_key: &str,
+    project_dir: &Path,
+    ui: &dyn UnlockUi,
+) -> Result<Unlocked, CryptoError> {
+    let identity = check_identity(identity, public_key)?;
+    let current = store::canonical_project_dir(project_dir)?;
+    let matches = bound.as_deref().is_some_and(|b| {
+        b == current
+            || std::fs::canonicalize(b)
+                .ok()
+                .and_then(|p| p.to_str().map(|s| s == current))
+                .unwrap_or(false)
+    });
+    if matches {
+        return Ok(Unlocked {
+            identity,
+            binding: Binding::Verified(VerifiedProject {
+                public_key: public_key.to_string(),
+            }),
+        });
+    }
+
+    let bound_shown = bound
+        .as_deref()
+        .map(sanitize_for_terminal)
+        .unwrap_or_else(|| "(none recorded)".to_string());
+    let current_shown = sanitize_for_terminal(&current);
+    ui.show(&format!(
+        "WARNING: this key was created for project {} but you are unlocking it for {}. \
+         A changed .stand.toml may be trying to use a key from another project.",
+        bound_shown, current_shown
+    ));
+    let confirmed = ui
+        .confirm("Unlock this key for the current project anyway?")
+        .unwrap_or(false);
+    if confirmed {
+        Ok(Unlocked {
+            identity,
+            binding: Binding::Confirmed,
+        })
+    } else {
+        Err(CryptoError::ProjectMismatch {
+            bound: bound_shown,
+            current: current_shown,
+        })
+    }
 }
 
 fn check_identity(
@@ -301,6 +431,7 @@ mod tests {
             &f.identity,
             &SecretString::from(pw.to_string()),
             Some(WF),
+            &f.project,
         )
         .unwrap();
     }
@@ -419,6 +550,7 @@ mod tests {
             &other,
             &SecretString::from("pw".to_string()),
             Some(WF),
+            &f.project,
         )
         .unwrap();
         let ui = MockUi::new(vec![Some("pw")]);
@@ -563,7 +695,14 @@ mod tests {
 
     fn write_touch_id(f: &Fixture) {
         let se = MockSe::new(true, false);
-        crate::crypto::enable::add_touch_id_in(&f.config, &se, &f.identity, &f.public_key).unwrap();
+        crate::crypto::enable::add_touch_id_in(
+            &f.config,
+            &se,
+            &f.identity,
+            &f.public_key,
+            &f.project,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -736,6 +875,168 @@ mod tests {
         );
         unlock_project_identity_with(&f.project, Some(&f.public_key), &purpose(), &c).unwrap();
         assert!(!ui.shown_messages().join("\n").contains("Touch ID"));
+    }
+
+    // === project binding ===
+
+    /// Writes `<P>.age` bound to a different project directory.
+    fn write_pass_wrap_for_other_project(f: &Fixture, pw: &str) -> std::path::PathBuf {
+        let other = f._tmp.path().join("other-project");
+        std::fs::create_dir_all(&other).unwrap();
+        store::write_passphrase_identity_in(
+            &f.config,
+            &f.public_key,
+            &f.identity,
+            &SecretString::from(pw.to_string()),
+            Some(WF),
+            &other,
+        )
+        .unwrap();
+        std::fs::canonicalize(other).unwrap()
+    }
+
+    #[test]
+    fn test_matching_binding_is_verified_without_confirmation() {
+        let f = fixture();
+        write_pass_wrap(&f, "pw");
+        let ui = MockUi::new(vec![Some("pw")]);
+        let c = ctx(
+            env_for(&f),
+            Some(ui.clone()),
+            MockSe::new(false, false),
+            no_warnings(),
+        );
+        let u =
+            unlock_project_identity_verified_with(&f.project, Some(&f.public_key), &purpose(), &c)
+                .unwrap();
+        assert_eq!(u.verified().unwrap().public_key(), f.public_key);
+        assert_eq!(ui.confirm_count(), 0);
+    }
+
+    #[test]
+    fn test_binding_mismatch_declined_refuses_and_names_both_paths() {
+        let f = fixture();
+        let other = write_pass_wrap_for_other_project(&f, "pw");
+        let ui = MockUi::new(vec![Some("pw")]);
+        ui.set_confirm(Some(false));
+        let c = ctx(
+            env_for(&f),
+            Some(ui.clone()),
+            MockSe::new(false, false),
+            no_warnings(),
+        );
+        let r =
+            unlock_project_identity_verified_with(&f.project, Some(&f.public_key), &purpose(), &c);
+        assert!(matches!(r, Err(CryptoError::ProjectMismatch { .. })));
+        assert_eq!(ui.confirm_count(), 1);
+        let shown = ui.shown_messages().join("\n");
+        assert!(shown.contains(other.to_str().unwrap()));
+        assert!(shown.contains(std::fs::canonicalize(&f.project).unwrap().to_str().unwrap()));
+    }
+
+    #[test]
+    fn test_binding_mismatch_unanswerable_confirm_refuses() {
+        let f = fixture();
+        write_pass_wrap_for_other_project(&f, "pw");
+        let ui = MockUi::new(vec![Some("pw")]);
+        ui.set_confirm(None);
+        let c = ctx(
+            env_for(&f),
+            Some(ui),
+            MockSe::new(false, false),
+            no_warnings(),
+        );
+        let r =
+            unlock_project_identity_verified_with(&f.project, Some(&f.public_key), &purpose(), &c);
+        assert!(matches!(r, Err(CryptoError::ProjectMismatch { .. })));
+    }
+
+    #[test]
+    fn test_binding_mismatch_confirmed_yields_confirmed_not_verified() {
+        let f = fixture();
+        write_pass_wrap_for_other_project(&f, "pw");
+        let ui = MockUi::new(vec![Some("pw")]);
+        ui.set_confirm(Some(true));
+        let c = ctx(
+            env_for(&f),
+            Some(ui),
+            MockSe::new(false, false),
+            no_warnings(),
+        );
+        let u =
+            unlock_project_identity_verified_with(&f.project, Some(&f.public_key), &purpose(), &c)
+                .unwrap();
+        assert!(matches!(u.binding, Binding::Confirmed));
+        assert!(u.verified().is_none());
+    }
+
+    #[test]
+    fn test_identity_without_project_line_counts_as_mismatch() {
+        let f = fixture();
+        let plain = format!(
+            "# public key: {}\n{}\n",
+            f.public_key,
+            f.identity.to_string().expose_secret()
+        );
+        let wrapped = store::wrap_with_passphrase(
+            plain.as_bytes(),
+            &SecretString::from("pw".to_string()),
+            Some(WF),
+        )
+        .unwrap();
+        store::ensure_identities_dir_in(&f.config).unwrap();
+        store::write_private_file(&store::identity_path_in(&f.config, &f.public_key), &wrapped)
+            .unwrap();
+        let ui = MockUi::new(vec![Some("pw")]);
+        ui.set_confirm(Some(false));
+        let c = ctx(
+            env_for(&f),
+            Some(ui.clone()),
+            MockSe::new(false, false),
+            no_warnings(),
+        );
+        let r =
+            unlock_project_identity_verified_with(&f.project, Some(&f.public_key), &purpose(), &c);
+        assert!(matches!(r, Err(CryptoError::ProjectMismatch { .. })));
+        assert!(ui.shown_messages().join("\n").contains("none recorded"));
+    }
+
+    #[test]
+    fn test_touch_id_path_also_checks_binding_and_does_not_fall_back() {
+        let f = fixture();
+        write_pass_wrap(&f, "pw");
+        // SE copy bound to another project.
+        let other = f._tmp.path().join("other-project");
+        std::fs::create_dir_all(&other).unwrap();
+        let se = MockSe::new(true, false);
+        crate::crypto::enable::add_touch_id_in(&f.config, &se, &f.identity, &f.public_key, &other)
+            .unwrap();
+        let ui = MockUi::new(vec![Some("pw")]);
+        ui.set_confirm(Some(false));
+        let c = ctx(
+            env_for(&f),
+            Some(ui.clone()),
+            MockSe::new(true, false),
+            no_warnings(),
+        );
+        let r =
+            unlock_project_identity_verified_with(&f.project, Some(&f.public_key), &purpose(), &c);
+        assert!(matches!(r, Err(CryptoError::ProjectMismatch { .. })));
+        assert_eq!(ui.prompt_count(), 0, "must not fall back to the passphrase");
+    }
+
+    #[test]
+    fn test_env_key_and_legacy_paths_are_not_binding_checked() {
+        let f = fixture();
+        let mut env = env_for(&f);
+        env.private_key = Some(f.identity.to_string().expose_secret().to_string());
+        env.ci = Some("true".to_string());
+        let c = ctx(env, None, MockSe::new(false, false), no_warnings());
+        let u =
+            unlock_project_identity_verified_with(&f.project, Some(&f.public_key), &purpose(), &c)
+                .unwrap();
+        assert!(matches!(u.binding, Binding::NotApplicable));
+        assert!(u.verified().is_none());
     }
 
     #[test]

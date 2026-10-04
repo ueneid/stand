@@ -34,12 +34,15 @@ pub fn prompt_new_passphrase(ui: &dyn UnlockUi) -> Result<SecretString, CryptoEr
 
 /// Generates a new project identity, asks for a passphrase twice and writes `<P>.age`.
 ///
+/// The identity is bound to `project_dir` (see [`store::identity_file_contents`]).
+///
 /// Returns the identity and its public key `P`. `work_factor` of `None` uses
 /// the calibrated default.
 pub fn create_passphrase_identity_in(
     config_dir: &Path,
     ui: &dyn UnlockUi,
     work_factor: Option<u8>,
+    project_dir: &Path,
 ) -> Result<(x25519::Identity, String), CryptoError> {
     let passphrase = prompt_new_passphrase(ui)?;
     let identity = x25519::Identity::generate();
@@ -50,6 +53,7 @@ pub fn create_passphrase_identity_in(
         &identity,
         &passphrase,
         work_factor,
+        project_dir,
     )?;
     Ok((identity, public_key))
 }
@@ -58,8 +62,9 @@ pub fn create_passphrase_identity_in(
 pub fn create_passphrase_identity(
     ui: &dyn UnlockUi,
     work_factor: Option<u8>,
+    project_dir: &Path,
 ) -> Result<(x25519::Identity, String), CryptoError> {
-    create_passphrase_identity_in(&store::config_dir()?, ui, work_factor)
+    create_passphrase_identity_in(&store::config_dir()?, ui, work_factor, project_dir)
 }
 
 /// Creates a Secure Enclave key and writes `<P>.se-identity` and `<P>.se.age`.
@@ -70,6 +75,7 @@ pub fn add_touch_id_in(
     backend: &dyn SecureEnclaveBackend,
     identity: &x25519::Identity,
     public_key: &str,
+    project_dir: &Path,
 ) -> Result<(PathBuf, PathBuf), CryptoError> {
     store::validate_public_key(public_key)?;
     let wrapped_path = store::se_wrapped_path_in(config_dir, public_key);
@@ -82,7 +88,7 @@ pub fn add_touch_id_in(
     store::ensure_identities_dir_in(config_dir)?;
 
     let material = backend.keygen()?;
-    let plaintext = store::identity_file_contents(identity);
+    let plaintext = store::identity_file_contents(identity, project_dir)?;
     let wrapped = backend.wrap(&material.recipient, plaintext.expose_secret().as_bytes())?;
 
     let identity_path = store::se_identity_path_in(config_dir, public_key);
@@ -96,8 +102,15 @@ pub fn add_touch_id(
     backend: &dyn SecureEnclaveBackend,
     identity: &x25519::Identity,
     public_key: &str,
+    project_dir: &Path,
 ) -> Result<(PathBuf, PathBuf), CryptoError> {
-    add_touch_id_in(&store::config_dir()?, backend, identity, public_key)
+    add_touch_id_in(
+        &store::config_dir()?,
+        backend,
+        identity,
+        public_key,
+        project_dir,
+    )
 }
 
 /// Unwraps `<P>.age` in memory with `passphrase` and checks it yields `public_key`.
@@ -155,7 +168,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         let ui = MockUi::new(vec![Some("pw"), Some("pw")]);
         let (identity, p) =
-            create_passphrase_identity_in(tmp.path(), ui.as_ref(), Some(WF)).unwrap();
+            create_passphrase_identity_in(tmp.path(), ui.as_ref(), Some(WF), tmp.path()).unwrap();
         assert_eq!(identity.to_public().to_string(), p);
         assert!(store::identity_path_in(tmp.path(), &p).exists());
         verify_passphrase_wrap_in(
@@ -171,7 +184,7 @@ mod tests {
     fn test_create_passphrase_identity_rejects_mismatch() {
         let tmp = tempdir().unwrap();
         let ui = MockUi::new(vec![Some("a"), Some("b")]);
-        let r = create_passphrase_identity_in(tmp.path(), ui.as_ref(), Some(WF));
+        let r = create_passphrase_identity_in(tmp.path(), ui.as_ref(), Some(WF), tmp.path());
         assert!(matches!(r, Err(CryptoError::UnlockFailed(_))));
         assert!(!store::identities_dir_in(tmp.path()).exists());
     }
@@ -180,16 +193,21 @@ mod tests {
     fn test_create_passphrase_identity_rejects_empty_and_cancel() {
         let tmp = tempdir().unwrap();
         let ui = MockUi::new(vec![Some(""), Some("")]);
-        assert!(create_passphrase_identity_in(tmp.path(), ui.as_ref(), Some(WF)).is_err());
+        assert!(
+            create_passphrase_identity_in(tmp.path(), ui.as_ref(), Some(WF), tmp.path()).is_err()
+        );
         let ui = MockUi::new(vec![None]);
-        assert!(create_passphrase_identity_in(tmp.path(), ui.as_ref(), Some(WF)).is_err());
+        assert!(
+            create_passphrase_identity_in(tmp.path(), ui.as_ref(), Some(WF), tmp.path()).is_err()
+        );
     }
 
     #[test]
     fn test_verify_passphrase_wrap_rejects_wrong_passphrase() {
         let tmp = tempdir().unwrap();
         let ui = MockUi::new(vec![Some("pw"), Some("pw")]);
-        let (_, p) = create_passphrase_identity_in(tmp.path(), ui.as_ref(), Some(WF)).unwrap();
+        let (_, p) =
+            create_passphrase_identity_in(tmp.path(), ui.as_ref(), Some(WF), tmp.path()).unwrap();
         let r = verify_passphrase_wrap_in(
             tmp.path(),
             &p,
@@ -205,7 +223,15 @@ mod tests {
         let other = x25519::Identity::generate();
         let claimed = x25519::Identity::generate().to_public().to_string();
         let pw = SecretString::from("pw".to_string());
-        store::write_passphrase_identity_in(tmp.path(), &claimed, &other, &pw, Some(WF)).unwrap();
+        store::write_passphrase_identity_in(
+            tmp.path(),
+            &claimed,
+            &other,
+            &pw,
+            Some(WF),
+            tmp.path(),
+        )
+        .unwrap();
         let r = verify_passphrase_wrap_in(tmp.path(), &claimed, &pw, Some(WF));
         assert!(matches!(r, Err(CryptoError::IdentityMismatch { .. })));
     }
@@ -216,7 +242,8 @@ mod tests {
         let identity = x25519::Identity::generate();
         let p = identity.to_public().to_string();
         let se = MockSe::new(true, false);
-        let (id_path, wrapped_path) = add_touch_id_in(tmp.path(), &se, &identity, &p).unwrap();
+        let (id_path, wrapped_path) =
+            add_touch_id_in(tmp.path(), &se, &identity, &p, tmp.path()).unwrap();
         assert_eq!(id_path, store::se_identity_path_in(tmp.path(), &p));
         assert_eq!(wrapped_path, store::se_wrapped_path_in(tmp.path(), &p));
         assert!(std::fs::read_to_string(&id_path)
@@ -234,13 +261,49 @@ mod tests {
     }
 
     #[test]
+    fn test_add_touch_id_wraps_plaintext_with_project_line() {
+        let tmp = tempdir().unwrap();
+        let project = tempdir().unwrap();
+        let identity = x25519::Identity::generate();
+        let p = identity.to_public().to_string();
+        let se = MockSe::new(true, false);
+        let (_, wrapped_path) =
+            add_touch_id_in(tmp.path(), &se, &identity, &p, project.path()).unwrap();
+        let wrapped = std::fs::read(wrapped_path).unwrap();
+        // MockSe "encrypts" by prefixing.
+        let plain = wrapped.strip_prefix(b"MOCK-SE:").unwrap();
+        assert_eq!(
+            store::parse_project_binding(plain).as_deref(),
+            std::fs::canonicalize(project.path()).unwrap().to_str()
+        );
+    }
+
+    #[test]
+    fn test_create_passphrase_identity_binds_project() {
+        let tmp = tempdir().unwrap();
+        let project = tempdir().unwrap();
+        let ui = MockUi::new(vec![Some("pw"), Some("pw")]);
+        let (_, p) =
+            create_passphrase_identity_in(tmp.path(), ui.as_ref(), Some(WF), project.path())
+                .unwrap();
+        let bytes = std::fs::read(store::identity_path_in(tmp.path(), &p)).unwrap();
+        let plain =
+            store::unwrap_with_passphrase(&bytes, &SecretString::from("pw".to_string()), Some(WF))
+                .unwrap();
+        assert_eq!(
+            store::parse_project_binding(&plain).as_deref(),
+            std::fs::canonicalize(project.path()).unwrap().to_str()
+        );
+    }
+
+    #[test]
     fn test_add_touch_id_errors_when_already_present() {
         let tmp = tempdir().unwrap();
         let identity = x25519::Identity::generate();
         let p = identity.to_public().to_string();
         let se = MockSe::new(true, false);
-        add_touch_id_in(tmp.path(), &se, &identity, &p).unwrap();
-        let again = add_touch_id_in(tmp.path(), &se, &identity, &p);
+        add_touch_id_in(tmp.path(), &se, &identity, &p, tmp.path()).unwrap();
+        let again = add_touch_id_in(tmp.path(), &se, &identity, &p, tmp.path());
         assert!(matches!(again, Err(CryptoError::StoreError(_))));
     }
 }
