@@ -258,50 +258,62 @@ fn test_cli_env_command_options_conflict() {
 
 // === Encryption Integration Tests ===
 
+/// Runs the binary hermetically: config dir and HOME in a temp dir, no terminal,
+/// no inherited stand/CI variables.
+fn hermetic_stand(project: &std::path::Path) -> assert_cmd::Command {
+    let cfg = project.join(".test-config-home");
+    fs::create_dir_all(&cfg).unwrap();
+    let mut cmd = cargo_bin_cmd!("stand");
+    cmd.current_dir(project)
+        .env("XDG_CONFIG_HOME", &cfg)
+        .env("HOME", &cfg)
+        .env("STAND_FORCE_NON_TTY", "1")
+        .env_remove("CI")
+        .env_remove("STAND_KEY_SOURCE")
+        .env_remove("STAND_PRIVATE_KEY")
+        .env_remove("STAND_UNLOCK");
+    cmd
+}
+
+/// Writes a project config with encryption enabled and a legacy `.stand.keys`
+/// (the only way to set up encryption without a terminal).
+fn write_encrypted_project(dir: &std::path::Path) {
+    let key_pair = stand::crypto::generate_key_pair();
+    stand::crypto::keys::save_private_key(&dir.join(".stand.keys"), &key_pair.private_key).unwrap();
+    fs::write(
+        dir.join(".stand.toml"),
+        format!(
+            "version = \"1.0\"\n\n[encryption]\npublic_key = \"{}\"\n\n[environments.dev]\ndescription = \"Dev\"\n",
+            key_pair.public_key
+        ),
+    )
+    .unwrap();
+}
+
 #[test]
-fn test_cli_encrypt_enable_creates_keys() {
+fn test_cli_encrypt_enable_requires_terminal() {
     let dir = tempdir().unwrap();
+    hermetic_stand(dir.path()).arg("init").assert().success();
+    let before = fs::read_to_string(dir.path().join(".stand.toml")).unwrap();
 
-    // First initialize the project
-    let mut cmd = cargo_bin_cmd!("stand");
-    cmd.current_dir(dir.path()).arg("init").assert().success();
-
-    // Enable encryption
-    let mut cmd = cargo_bin_cmd!("stand");
-    cmd.current_dir(dir.path())
+    // Enabling encryption asks for a passphrase, which needs a terminal.
+    hermetic_stand(dir.path())
         .args(["encrypt", "enable"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("Generated key pair"))
-        .stdout(predicate::str::contains("Added [encryption] section"));
+        .failure()
+        .stderr(predicate::str::contains("interactive terminal"));
 
-    // Verify .stand.keys was created
-    let keys_path = dir.path().join(".stand.keys");
-    assert!(keys_path.exists());
-
-    // Verify [encryption] section was added to config
-    let config_content = fs::read_to_string(dir.path().join(".stand.toml")).unwrap();
-    assert!(config_content.contains("[encryption]"));
-    assert!(config_content.contains("public_key = \"age1"));
+    assert!(!dir.path().join(".stand.keys").exists());
+    let after = fs::read_to_string(dir.path().join(".stand.toml")).unwrap();
+    assert_eq!(before, after);
 }
 
 #[test]
 fn test_cli_encrypt_enable_already_enabled() {
     let dir = tempdir().unwrap();
+    write_encrypted_project(dir.path());
 
-    // Initialize and enable encryption
-    let mut cmd = cargo_bin_cmd!("stand");
-    cmd.current_dir(dir.path()).arg("init").assert().success();
-
-    let mut cmd = cargo_bin_cmd!("stand");
-    cmd.current_dir(dir.path())
-        .args(["encrypt", "enable"])
-        .assert()
-        .success();
-
-    // Try to enable again - should fail
-    let mut cmd = cargo_bin_cmd!("stand");
-    cmd.current_dir(dir.path())
+    hermetic_stand(dir.path())
         .args(["encrypt", "enable"])
         .assert()
         .failure()
@@ -309,54 +321,50 @@ fn test_cli_encrypt_enable_already_enabled() {
 }
 
 #[test]
-fn test_cli_init_with_encrypt_flag() {
+fn test_cli_init_with_encrypt_flag_requires_terminal() {
     let dir = tempdir().unwrap();
 
-    // Initialize with --encrypt flag
-    let mut cmd = cargo_bin_cmd!("stand");
-    cmd.current_dir(dir.path())
+    // The config is created, then enabling encryption fails without a terminal.
+    hermetic_stand(dir.path())
         .args(["init", "--encrypt"])
         .assert()
-        .success()
+        .failure()
         .stdout(predicate::str::contains("Created .stand.toml"))
-        .stdout(predicate::str::contains("Generated key pair"));
+        .stderr(predicate::str::contains("interactive terminal"));
 
-    // Verify both config and keys were created
     assert!(dir.path().join(".stand.toml").exists());
-    assert!(dir.path().join(".stand.keys").exists());
+    assert!(!dir.path().join(".stand.keys").exists());
+}
 
-    // Verify encryption section in config
-    let config_content = fs::read_to_string(dir.path().join(".stand.toml")).unwrap();
-    assert!(config_content.contains("[encryption]"));
+#[test]
+fn test_cli_encrypt_subcommands_exist() {
+    let mut cmd = cargo_bin_cmd!("stand");
+    cmd.args(["encrypt", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("enable"))
+        .stdout(predicate::str::contains("disable"))
+        .stdout(predicate::str::contains("migrate"))
+        .stdout(predicate::str::contains("add-touch-id"));
 }
 
 #[test]
 fn test_cli_set_and_get_encrypted_value() {
     let dir = tempdir().unwrap();
+    write_encrypted_project(dir.path());
 
-    // Initialize with encryption
-    let mut cmd = cargo_bin_cmd!("stand");
-    cmd.current_dir(dir.path())
-        .args(["init", "--encrypt"])
-        .assert()
-        .success();
-
-    // Set an encrypted value
-    let mut cmd = cargo_bin_cmd!("stand");
-    cmd.current_dir(dir.path())
+    hermetic_stand(dir.path())
         .args(["set", "dev", "API_KEY", "secret-value-123", "--encrypt"])
         .assert()
         .success()
         .stdout(predicate::str::contains("(encrypted)"));
 
-    // Verify the value is encrypted in the config file
     let config_content = fs::read_to_string(dir.path().join(".stand.toml")).unwrap();
     assert!(config_content.contains("API_KEY = \"encrypted:"));
     assert!(!config_content.contains("secret-value-123")); // Plain value should NOT appear
 
-    // Get the value - should be decrypted
-    let mut cmd = cargo_bin_cmd!("stand");
-    cmd.current_dir(dir.path())
+    // Legacy .stand.keys needs no terminal, so get can decrypt.
+    hermetic_stand(dir.path())
         .args(["get", "dev", "API_KEY"])
         .assert()
         .success()
@@ -366,24 +374,14 @@ fn test_cli_set_and_get_encrypted_value() {
 #[test]
 fn test_cli_inspect_shows_encrypted_marker() {
     let dir = tempdir().unwrap();
+    write_encrypted_project(dir.path());
 
-    // Initialize with encryption
-    let mut cmd = cargo_bin_cmd!("stand");
-    cmd.current_dir(dir.path())
-        .args(["init", "--encrypt"])
-        .assert()
-        .success();
-
-    // Set an encrypted value
-    let mut cmd = cargo_bin_cmd!("stand");
-    cmd.current_dir(dir.path())
+    hermetic_stand(dir.path())
         .args(["set", "dev", "SECRET", "my-secret", "--encrypt"])
         .assert()
         .success();
 
-    // Inspect should show [ENCRYPTED] marker
-    let mut cmd = cargo_bin_cmd!("stand");
-    cmd.current_dir(dir.path())
+    hermetic_stand(dir.path())
         .args(["inspect", "dev", "--values"])
         .assert()
         .success()
@@ -409,10 +407,9 @@ fn test_cli_set_encrypted_without_encryption_enabled() {
 }
 
 #[test]
-fn test_cli_env_fails_on_decryption_error() {
+fn test_cli_env_reads_values_from_process_env_and_never_decrypts() {
     let dir = tempdir().unwrap();
 
-    // Create a config with an encrypted value but NO .stand.keys file
     let config_content = r#"
 version = "2.0"
 
@@ -422,20 +419,24 @@ public_key = "age1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 [environments.dev]
 description = "Development"
 SECRET = "encrypted:invaliddata"
+MISSING = "plain"
 "#;
     fs::write(dir.path().join(".stand.toml"), config_content).unwrap();
 
-    // Run `stand env` simulating being inside a Stand subshell
-    let mut cmd = cargo_bin_cmd!("stand");
-    cmd.current_dir(dir.path())
+    // `stand env` runs inside a Stand subshell: values were already decrypted
+    // and exported, so it reads them from the process environment.
+    hermetic_stand(dir.path())
         .env("STAND_ACTIVE", "1")
         .env("STAND_ENVIRONMENT", "dev")
         .env("STAND_PROJECT_ROOT", dir.path().to_str().unwrap())
-        .env_remove("STAND_PRIVATE_KEY")
+        .env("SECRET", "already-decrypted")
+        .env_remove("MISSING")
         .arg("env")
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("decrypt").or(predicate::str::contains("private key")));
+        .success()
+        .stdout(predicate::str::contains("SECRET=already-decrypted"))
+        .stdout(predicate::str::contains("MISSING").not())
+        .stdout(predicate::str::contains("encrypted:").not());
 }
 
 #[test]
@@ -456,9 +457,7 @@ SECRET = "encrypted:invaliddata"
     fs::write(dir.path().join(".stand.toml"), config_content).unwrap();
 
     // Run `stand exec dev -- echo test` — should fail before executing the command
-    let mut cmd = cargo_bin_cmd!("stand");
-    cmd.current_dir(dir.path())
-        .env_remove("STAND_PRIVATE_KEY")
+    hermetic_stand(dir.path())
         .args(["exec", "dev", "--", "echo", "test"])
         .assert()
         .failure()
