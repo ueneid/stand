@@ -15,7 +15,7 @@ fn main() -> anyhow::Result<()> {
 
             // If --encrypt flag is set, also enable encryption
             if enable_encrypt {
-                if let Err(e) = encrypt::enable_encryption(&current_dir) {
+                if let Err(e) = encrypt::enable_encryption(&current_dir, false) {
                     eprintln!("Error: Failed to enable encryption: {}", e);
                     std::process::exit(1);
                 }
@@ -115,14 +115,26 @@ fn main() -> anyhow::Result<()> {
         Commands::Encrypt(subcmd) => {
             let current_dir = std::env::current_dir()?;
             match subcmd {
-                EncryptCommands::Enable => {
-                    if let Err(e) = encrypt::enable_encryption(&current_dir) {
+                EncryptCommands::Enable { touch_id } => {
+                    if let Err(e) = encrypt::enable_encryption(&current_dir, touch_id) {
                         eprintln!("Error: {}", e);
                         std::process::exit(1);
                     }
                 }
                 EncryptCommands::Disable => {
                     if let Err(e) = encrypt::disable_encryption(&current_dir) {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+                EncryptCommands::Migrate => {
+                    if let Err(e) = encrypt::migrate_encryption(&current_dir) {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+                EncryptCommands::AddTouchId => {
+                    if let Err(e) = encrypt::add_touch_id(&current_dir) {
                         eprintln!("Error: {}", e);
                         std::process::exit(1);
                     }
