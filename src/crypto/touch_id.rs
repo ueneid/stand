@@ -26,6 +26,10 @@ pub struct SeKeyMaterial {
 pub trait SecureEnclaveBackend: Send + Sync {
     /// Whether the backend can be used on this machine (plugin binary present).
     fn is_available(&self) -> bool;
+    /// Resolved path of the plugin binary, shown to the human before Touch ID.
+    fn plugin_path(&self) -> Option<PathBuf> {
+        None
+    }
     /// Creates a new Secure Enclave key protected by biometry or passcode.
     fn keygen(&self) -> Result<SeKeyMaterial, CryptoError>;
     /// Encrypts `plaintext` to the Secure Enclave `recipient` (needs no human).
@@ -77,12 +81,57 @@ fn check_se_recipient(recipient: &str) -> Result<age::plugin::Recipient, CryptoE
     Ok(parsed)
 }
 
+/// Validates a `<P>.se-identity` file before it is handed to an age plugin.
+///
+/// The file is writable by any process of the same user, and age would happily
+/// spawn whatever `age-plugin-<name>` binary an identity names. Every
+/// identity must therefore belong to the `se` plugin, and the `# public key:`
+/// recipient, when present, must be an `se` recipient.
+pub fn validate_se_identity_file(
+    identity_file: &str,
+) -> Result<Vec<age::plugin::Identity>, CryptoError> {
+    let refuse = |why: String| CryptoError::StoreError(format!("refusing identity file: {}", why));
+    let mut identities = vec![];
+    for line in identity_file.lines().map(str::trim) {
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("# public key:") {
+            check_se_recipient(rest.trim())
+                .map_err(|e| refuse(format!("bad recipient ({})", e)))?;
+            continue;
+        }
+        if line.starts_with('#') {
+            continue;
+        }
+        let identity = line
+            .parse::<age::plugin::Identity>()
+            .map_err(|_| refuse("line is not an age plugin identity".to_string()))?;
+        if identity.plugin() != PLUGIN_NAME {
+            return Err(refuse(format!(
+                "identity belongs to plugin '{}', expected '{}'",
+                crate::crypto::ui::sanitize_for_terminal(identity.plugin()),
+                PLUGIN_NAME
+            )));
+        }
+        identities.push(identity);
+    }
+    if identities.is_empty() {
+        return Err(refuse("no Secure Enclave identity found".to_string()));
+    }
+    Ok(identities)
+}
+
 /// The real backend using the `age-plugin-se` binary found in `PATH`.
 pub struct RealSecureEnclave;
 
 impl SecureEnclaveBackend for RealSecureEnclave {
     fn is_available(&self) -> bool {
         find_in_path(PLUGIN_BINARY).is_some()
+    }
+
+    fn plugin_path(&self) -> Option<PathBuf> {
+        find_in_path(PLUGIN_BINARY)
     }
 
     fn keygen(&self) -> Result<SeKeyMaterial, CryptoError> {
@@ -161,17 +210,15 @@ impl SecureEnclaveBackend for RealSecureEnclave {
         ciphertext: &[u8],
         ui: Arc<dyn UnlockUi>,
     ) -> Result<Vec<u8>, CryptoError> {
-        let identities =
-            age::IdentityFile::from_buffer(std::io::BufReader::new(identity_file.as_bytes()))
-                .map_err(|e| CryptoError::SecureEnclaveUnavailable(e.to_string()))?
-                .with_callbacks(UiCallbacks(ui))
-                .into_identities()
-                .map_err(|e| CryptoError::SecureEnclaveUnavailable(e.to_string()))?;
+        let identities = validate_se_identity_file(identity_file)?;
+        // Only ever construct the plugin client for the `se` plugin.
+        let plugin = age::plugin::IdentityPluginV1::new(PLUGIN_NAME, &identities, UiCallbacks(ui))
+            .map_err(|e| CryptoError::SecureEnclaveUnavailable(e.to_string()))?;
 
         let decryptor = age::Decryptor::new(ciphertext)
             .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
         let mut reader = decryptor
-            .decrypt(identities.iter().map(|i| i.as_ref() as &dyn age::Identity))
+            .decrypt(std::iter::once(&plugin as &dyn age::Identity))
             .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
         let mut out = vec![];
         reader
@@ -196,6 +243,55 @@ mod tests {
     #[test]
     fn test_recipient_from_identity_file_requires_public_key_line() {
         assert!(recipient_from_identity_file("AGE-PLUGIN-SE-1XXXX\n").is_err());
+    }
+
+    fn se_identity() -> String {
+        age::plugin::Identity::default_for_plugin("se").to_string()
+    }
+
+    #[test]
+    fn test_validate_se_identity_file_accepts_se_identities() {
+        let file = format!("# created: x\n\n{}\n", se_identity());
+        let ids = validate_se_identity_file(&file).unwrap();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0].plugin(), "se");
+    }
+
+    #[test]
+    fn test_validate_se_identity_file_rejects_other_plugins() {
+        let evil = age::plugin::Identity::default_for_plugin("evil").to_string();
+        let file = format!("{}\n{}\n", se_identity(), evil);
+        let err = validate_se_identity_file(&file).err().unwrap();
+        assert!(err.to_string().contains("refusing"), "{}", err);
+    }
+
+    #[test]
+    fn test_validate_se_identity_file_rejects_x25519_and_garbage() {
+        let x = age::x25519::Identity::generate();
+        let file = format!(
+            "{}\n",
+            age::secrecy::ExposeSecret::expose_secret(&x.to_string())
+        );
+        assert!(validate_se_identity_file(&file).is_err());
+        assert!(validate_se_identity_file("not an identity\n").is_err());
+        assert!(validate_se_identity_file("# only comments\n").is_err());
+    }
+
+    #[test]
+    fn test_validate_se_identity_file_rejects_non_se_public_key_line() {
+        let x = age::x25519::Identity::generate();
+        let file = format!("# public key: {}\n{}\n", x.to_public(), se_identity());
+        assert!(validate_se_identity_file(&file).is_err());
+    }
+
+    #[test]
+    fn test_real_unwrap_refuses_foreign_plugin_before_spawning() {
+        let evil = age::plugin::Identity::default_for_plugin("evil").to_string();
+        let ui = crate::crypto::testing::MockUi::new(vec![]);
+        let err = RealSecureEnclave
+            .unwrap(&format!("{}\n", evil), b"irrelevant", ui)
+            .unwrap_err();
+        assert!(err.to_string().contains("refusing"), "{}", err);
     }
 
     #[test]

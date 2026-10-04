@@ -67,6 +67,8 @@ pub struct MockSe {
     pub fail_unwrap: bool,
     /// Error text used when `fail_unwrap` is set.
     pub fail_reason: String,
+    /// Path reported by `plugin_path`.
+    pub plugin_path: Option<std::path::PathBuf>,
     pub unwrap_calls: AtomicUsize,
     pub keygen_calls: AtomicUsize,
 }
@@ -77,6 +79,7 @@ impl MockSe {
             available,
             fail_unwrap,
             fail_reason: "mock biometric failure".to_string(),
+            plugin_path: Some(std::path::PathBuf::from("/mock/bin/age-plugin-se")),
             unwrap_calls: AtomicUsize::new(0),
             keygen_calls: AtomicUsize::new(0),
         }
@@ -97,6 +100,10 @@ const MOCK_PREFIX: &[u8] = b"MOCK-SE:";
 impl SecureEnclaveBackend for MockSe {
     fn is_available(&self) -> bool {
         self.available
+    }
+
+    fn plugin_path(&self) -> Option<std::path::PathBuf> {
+        self.plugin_path.clone()
     }
 
     fn keygen(&self) -> Result<SeKeyMaterial, CryptoError> {

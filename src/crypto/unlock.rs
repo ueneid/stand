@@ -174,6 +174,12 @@ pub fn unlock_project_identity_with(
         && se_identity.exists()
         && ctx.secure_enclave.is_available()
     {
+        if let Some(path) = ctx.secure_enclave.plugin_path() {
+            ui.show(&format!(
+                "Touch ID will run the age plugin at {}. Cancel if that is not the plugin you installed.",
+                sanitize_for_terminal(&path.display().to_string())
+            ));
+        }
         match try_touch_id(ctx, &se_identity, &se_wrapped, ui.clone()) {
             Ok(identity) => return check_identity(identity, public_key),
             Err(reason) => ui.show(&format!(
@@ -593,6 +599,53 @@ mod tests {
         assert!(shown.contains("Touch ID unlock failed"));
         assert!(shown.contains("Falling back to passphrase"));
         assert_eq!(ui.prompt_count(), 1);
+    }
+
+    #[test]
+    fn test_touch_id_attempt_shows_resolved_plugin_path() {
+        let f = fixture();
+        write_pass_wrap(&f, "pw");
+        write_touch_id(&f);
+        let ui = MockUi::new(vec![Some("pw")]);
+        let c = ctx(
+            env_for(&f),
+            Some(ui.clone()),
+            MockSe::new(true, false),
+            no_warnings(),
+        );
+        unlock_project_identity_with(&f.project, Some(&f.public_key), &purpose(), &c).unwrap();
+        let shown = ui.shown_messages();
+        let banner_pos = shown
+            .iter()
+            .position(|m| m.contains("wants to decrypt"))
+            .unwrap();
+        let path_pos = shown
+            .iter()
+            .position(|m| m.contains("/mock/bin/age-plugin-se"))
+            .expect("plugin path must be shown");
+        let touch_pos = shown
+            .iter()
+            .position(|m| m.contains("Touch ID requested"))
+            .unwrap();
+        assert!(banner_pos < path_pos && path_pos < touch_pos);
+    }
+
+    #[test]
+    fn test_plugin_path_not_shown_when_touch_id_is_not_attempted() {
+        let f = fixture();
+        write_pass_wrap(&f, "pw");
+        write_touch_id(&f);
+        let mut env = env_for(&f);
+        env.unlock_mode = Some("passphrase".to_string());
+        let ui = MockUi::new(vec![Some("pw")]);
+        let c = ctx(
+            env,
+            Some(ui.clone()),
+            MockSe::new(true, false),
+            no_warnings(),
+        );
+        unlock_project_identity_with(&f.project, Some(&f.public_key), &purpose(), &c).unwrap();
+        assert!(!ui.shown_messages().join("\n").contains("age-plugin-se"));
     }
 
     #[test]
