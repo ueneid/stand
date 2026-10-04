@@ -15,7 +15,7 @@ use age::x25519;
 use super::store::{self, UnwrapError};
 use super::touch_id::{RealSecureEnclave, SecureEnclaveBackend};
 use super::tty::TtyUi;
-use super::ui::{DecryptPurpose, UnlockUi};
+use super::ui::{sanitize_for_terminal, DecryptPurpose, UnlockUi};
 use super::{keys, CryptoError};
 
 /// Maximum number of passphrase attempts.
@@ -178,7 +178,7 @@ pub fn unlock_project_identity_with(
             Ok(identity) => return check_identity(identity, public_key),
             Err(reason) => ui.show(&format!(
                 "Touch ID unlock failed: {}. Falling back to passphrase.",
-                reason
+                sanitize_for_terminal(&reason)
             )),
         }
     }
@@ -194,7 +194,7 @@ pub fn unlock_project_identity_with(
     Err(CryptoError::NoPrivateKey {
         hint: format!(
             "expected {}; run `stand encrypt migrate` to create it",
-            passphrase_file.display()
+            sanitize_for_terminal(&passphrase_file.display().to_string())
         ),
     })
 }
@@ -230,7 +230,9 @@ fn unlock_with_passphrase(
                     ui.show("Incorrect passphrase. Try again.");
                 }
             }
-            Err(UnwrapError::Other(reason)) => return Err(CryptoError::UnlockFailed(reason)),
+            Err(UnwrapError::Other(reason)) => {
+                return Err(CryptoError::UnlockFailed(sanitize_for_terminal(&reason)))
+            }
         }
     }
     Err(CryptoError::UnlockFailed(format!(
@@ -591,6 +593,40 @@ mod tests {
         assert!(shown.contains("Touch ID unlock failed"));
         assert!(shown.contains("Falling back to passphrase"));
         assert_eq!(ui.prompt_count(), 1);
+    }
+
+    #[test]
+    fn test_touch_id_failure_reason_is_sanitized() {
+        let f = fixture();
+        write_pass_wrap(&f, "pw");
+        write_touch_id(&f);
+        let ui = MockUi::new(vec![Some("pw")]);
+        let se = MockSe::new(true, true).with_fail_reason("bad\x1b[2K\rreason\n");
+        let c = ctx(env_for(&f), Some(ui.clone()), se, no_warnings());
+        unlock_project_identity_with(&f.project, Some(&f.public_key), &purpose(), &c).unwrap();
+        let shown = ui.shown_messages().join("\n");
+        assert!(!shown.contains('\x1b'));
+        assert!(!shown.contains('\r'));
+        assert!(shown.contains("bad\\x1b[2K\\rreason\\n"));
+    }
+
+    #[test]
+    fn test_missing_identity_hint_sanitizes_path() {
+        let f = fixture();
+        let mut env = env_for(&f);
+        env.config_dir = f.config.join("we\x1bird");
+        let c = ctx(
+            env,
+            Some(MockUi::new(vec![])),
+            MockSe::new(false, false),
+            no_warnings(),
+        );
+        let err =
+            match unlock_project_identity_with(&f.project, Some(&f.public_key), &purpose(), &c) {
+                Ok(_) => panic!("expected an error"),
+                Err(e) => e,
+            };
+        assert!(!err.to_string().contains('\x1b'));
     }
 
     #[test]

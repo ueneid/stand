@@ -65,6 +65,8 @@ impl UnlockUi for MockUi {
 pub struct MockSe {
     pub available: bool,
     pub fail_unwrap: bool,
+    /// Error text used when `fail_unwrap` is set.
+    pub fail_reason: String,
     pub unwrap_calls: AtomicUsize,
     pub keygen_calls: AtomicUsize,
 }
@@ -74,9 +76,15 @@ impl MockSe {
         Self {
             available,
             fail_unwrap,
+            fail_reason: "mock biometric failure".to_string(),
             unwrap_calls: AtomicUsize::new(0),
             keygen_calls: AtomicUsize::new(0),
         }
+    }
+
+    pub fn with_fail_reason(mut self, reason: &str) -> Self {
+        self.fail_reason = reason.to_string();
+        self
     }
 
     pub fn unwrap_count(&self) -> usize {
@@ -114,9 +122,7 @@ impl SecureEnclaveBackend for MockSe {
         self.unwrap_calls.fetch_add(1, Ordering::SeqCst);
         ui.show("(mock) Touch ID requested");
         if self.fail_unwrap {
-            return Err(CryptoError::DecryptionFailed(
-                "mock biometric failure".to_string(),
-            ));
+            return Err(CryptoError::DecryptionFailed(self.fail_reason.clone()));
         }
         ciphertext
             .strip_prefix(MOCK_PREFIX)

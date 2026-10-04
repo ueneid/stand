@@ -15,8 +15,18 @@ use colored::Colorize;
 use toml_edit::{DocumentMut, Item, Value};
 
 use crate::crypto::enable as crypto_enable;
+use crate::crypto::ui::sanitize_for_terminal;
 use crate::crypto::{keys, store, CryptoError, DecryptPurpose, UnlockContext, UnlockUi};
 use crate::crypto::{unlock_for_project_with, ENCRYPTED_PREFIX};
+
+/// Escapes terminal control characters in values shown to the user.
+fn san(value: &str) -> String {
+    sanitize_for_terminal(value)
+}
+
+fn san_path(path: &Path) -> String {
+    sanitize_for_terminal(&path.display().to_string())
+}
 
 const KEYS_FILE: &str = ".stand.keys";
 const CONFIG_FILE: &str = ".stand.toml";
@@ -72,7 +82,7 @@ pub fn enable_encryption_with(
     println!(
         "{} Saved passphrase-protected key to {}",
         "✓".green(),
-        store::identity_path_in(&ctx.env.config_dir, &public_key).display()
+        san_path(&store::identity_path_in(&ctx.env.config_dir, &public_key))
     );
     println!(
         "{} Added [encryption] section to {}",
@@ -96,7 +106,7 @@ pub fn enable_encryption_with(
         };
         match setup {
             Ok(()) => println!("{} Touch ID enabled", "✓".green()),
-            Err(e) => return Err(EncryptionCommandError::TouchIdSetup(e.to_string())),
+            Err(e) => return Err(EncryptionCommandError::TouchIdSetup(san(&e.to_string()))),
         }
     }
 
@@ -157,7 +167,7 @@ pub fn migrate_encryption_with(
     println!(
         "{} Saved passphrase-protected key to {}",
         "✓".green(),
-        identity_path.display()
+        san_path(&identity_path)
     );
 
     store::wipe_and_delete(&keys_path)?;
@@ -184,15 +194,15 @@ pub fn add_touch_id_with(
     let config_dir = &ctx.env.config_dir;
     let identity_path = store::identity_path_in(config_dir, &public_key);
     if !identity_path.exists() {
-        return Err(EncryptionCommandError::IdentityNotFound(
-            identity_path.display().to_string(),
-        ));
+        return Err(EncryptionCommandError::IdentityNotFound(san_path(
+            &identity_path,
+        )));
     }
     let wrapped_path = store::se_wrapped_path_in(config_dir, &public_key);
     if wrapped_path.exists() {
         return Err(CryptoError::StoreError(format!(
             "Touch ID is already set up ({} exists)",
-            wrapped_path.display()
+            san_path(&wrapped_path)
         ))
         .into());
     }
@@ -265,7 +275,7 @@ pub fn disable_encryption_with(
     }
     println!("{} Removed [encryption] section", "✓".green());
     for path in &result.removed_files {
-        println!("{} Removed {}", "✓".green(), path.display());
+        println!("{} Removed {}", "✓".green(), san_path(path));
     }
     println!("{} Encryption disabled", "✓".green());
     Ok(())
@@ -315,8 +325,8 @@ pub fn disable_encryption_internal(
                     let decrypted =
                         crate::crypto::decrypt_value(val_str, &identity).map_err(|e| {
                             EncryptionCommandError::DecryptionFailed {
-                                variable: key.to_string(),
-                                reason: e.to_string(),
+                                variable: san(&key),
+                                reason: san(&e.to_string()),
                             }
                         })?;
                     *value = Item::Value(Value::from(decrypted));
@@ -839,6 +849,21 @@ mod tests {
         assert_eq!(result.decrypted_count, 1);
         assert!(!f.project.join(KEYS_FILE).exists());
         assert!(read_config(&f).contains("SECRET = \"legacy-secret\""));
+    }
+
+    #[test]
+    fn test_disable_error_sanitizes_variable_name() {
+        let f = fixture();
+        let _ = enabled(&f);
+        let content = read_config(&f).replace(
+            "description = \"Development\"\n",
+            "description = \"Development\"\n\"BAD\\u001b[2K\" = \"encrypted:not-valid\"\n",
+        );
+        write_config(&f, &content);
+        let ui = MockUi::new(vec![Some("pw")]);
+        let err = disable_encryption_internal(&f.project, &ctx(&f, Some(ui), true)).unwrap_err();
+        assert!(!err.to_string().contains('\x1b'));
+        assert!(err.to_string().contains("BAD\\x1b[2K"));
     }
 
     #[test]
