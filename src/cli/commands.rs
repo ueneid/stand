@@ -16,7 +16,7 @@ pub enum Commands {
         /// Force initialization even if Stand is already initialized
         #[arg(short, long)]
         force: bool,
-        /// Initialize with encryption enabled (generates key pair)
+        /// Initialize with encryption enabled (same as `stand encrypt enable`, without Touch ID)
         #[arg(long)]
         encrypt: bool,
     },
@@ -101,8 +101,16 @@ pub enum Commands {
 
 #[derive(Subcommand, Debug)]
 pub enum EncryptCommands {
-    /// Enable encryption for this project (generates key pair)
-    Enable,
+    /// Enable encryption for this project (generates a key protected by a passphrase)
+    Enable {
+        /// Also protect the key with Touch ID (needs `age-plugin-se`)
+        #[arg(long)]
+        touch_id: bool,
+    },
     /// Disable encryption and decrypt all values
     Disable,
+    /// Move a legacy `.stand.keys` into the passphrase-protected key store
+    Migrate,
+    /// Add Touch ID unlock to a project that already uses a passphrase
+    AddTouchId,
 }

@@ -1,5 +1,4 @@
 use crate::config::loader;
-use crate::crypto::decrypt_variables;
 use crate::shell::{get_active_environment, is_stand_shell_active};
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
@@ -46,20 +45,25 @@ fn get_stand_markers() -> HashMap<String, String> {
     markers
 }
 
-/// Get user-defined variables for the current environment (with decryption)
+/// Get user-defined variables for the current environment.
+///
+/// `stand env` runs inside a Stand subshell, where the values were already
+/// decrypted and exported. Names come from the resolved config of the active
+/// environment; values come from the current process environment. Names that
+/// are not set in the process are skipped. Nothing is decrypted here.
 fn get_user_variables(project_path: &Path, env_name: &str) -> Result<HashMap<String, String>> {
     let config = loader::load_config_toml_with_inheritance(project_path)?;
 
-    let env = config
+    let env_config = config
         .environments
         .get(env_name)
         .ok_or_else(|| anyhow!("Environment '{}' not found in configuration", env_name))?;
 
-    // Decrypt any encrypted values
-    let decrypted = decrypt_variables(env.variables.clone(), project_path)
-        .map_err(|e| anyhow!("Failed to decrypt variables: {}", e))?;
-
-    Ok(decrypted)
+    Ok(env_config
+        .variables
+        .keys()
+        .filter_map(|name| env::var(name).ok().map(|value| (name.clone(), value)))
+        .collect())
 }
 
 /// Format output as plain text
@@ -267,12 +271,16 @@ DATABASE_URL = "postgres://localhost/dev"
 API_KEY = "dev-key"
 "#;
         fs::write(dir.path().join(".stand.toml"), config_content).unwrap();
+        env::set_var("DATABASE_URL", "postgres://localhost/dev");
+        env::set_var("API_KEY", "dev-key");
 
         let result = show_env(dir.path(), EnvOptions::default());
 
         env::remove_var("STAND_ACTIVE");
         env::remove_var("STAND_ENVIRONMENT");
         env::remove_var("STAND_PROJECT_ROOT");
+        env::remove_var("DATABASE_URL");
+        env::remove_var("API_KEY");
 
         assert!(result.is_ok());
         let output = result.unwrap();
@@ -329,6 +337,7 @@ description = "Development"
 DATABASE_URL = "postgres://localhost/dev"
 "#;
         fs::write(dir.path().join(".stand.toml"), config_content).unwrap();
+        env::set_var("DATABASE_URL", "postgres://localhost/dev");
 
         let options = EnvOptions {
             user_only: true,
@@ -338,6 +347,7 @@ DATABASE_URL = "postgres://localhost/dev"
 
         env::remove_var("STAND_ACTIVE");
         env::remove_var("STAND_ENVIRONMENT");
+        env::remove_var("DATABASE_URL");
 
         assert!(result.is_ok());
         let output = result.unwrap();
@@ -377,6 +387,39 @@ API_KEY = "test-key"
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
         assert!(parsed.get("stand").is_some());
         assert!(parsed.get("user").is_some());
+    }
+
+    #[test]
+    #[serial]
+    fn test_show_env_reads_values_from_process_env_without_decrypting() {
+        env::set_var("STAND_ACTIVE", "1");
+        env::set_var("STAND_ENVIRONMENT", "dev");
+        env::set_var("STAND_FORCE_NON_TTY", "1");
+        env::set_var("STAND_ENV_TEST_SECRET", "plain-from-process");
+        env::remove_var("STAND_ENV_TEST_ABSENT");
+
+        let dir = tempdir().unwrap();
+        let config_content = r#"
+version = "2.0"
+
+[environments.dev]
+description = "Development"
+STAND_ENV_TEST_SECRET = "encrypted:not-even-valid-ciphertext"
+STAND_ENV_TEST_ABSENT = "plain"
+"#;
+        fs::write(dir.path().join(".stand.toml"), config_content).unwrap();
+
+        let result = show_env(dir.path(), EnvOptions::default());
+
+        env::remove_var("STAND_ACTIVE");
+        env::remove_var("STAND_ENVIRONMENT");
+        env::remove_var("STAND_FORCE_NON_TTY");
+        env::remove_var("STAND_ENV_TEST_SECRET");
+
+        let output = result.unwrap();
+        assert!(output.contains("STAND_ENV_TEST_SECRET=plain-from-process"));
+        assert!(!output.contains("STAND_ENV_TEST_ABSENT"));
+        assert!(!output.contains("encrypted:"));
     }
 
     #[test]

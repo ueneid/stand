@@ -1,69 +1,84 @@
 //! Encryption management commands.
 
+//!
+//! Private keys are never stored in the project directory. `enable` creates a
+//! passphrase-wrapped identity in the user's config directory (optionally with a
+//! Touch ID wrap); `migrate` moves a legacy `.stand.keys` there. All core logic
+//! takes an [`UnlockContext`] so it can run against mock UIs and backends; the
+//! plain functions are thin wrappers using the production context.
+
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use colored::Colorize;
 use toml_edit::{DocumentMut, Item, Value};
 
+use crate::crypto::enable as crypto_enable;
+use crate::crypto::ui::sanitize_for_terminal;
+use crate::crypto::{keys, store, CryptoError, DecryptPurpose, UnlockContext, UnlockUi};
 use crate::crypto::{
-    generate_key_pair, load_private_key_for_decryption, CryptoError, ENCRYPTED_PREFIX,
+    unlock_for_project_exact_with, unlock_for_project_verified_with, ENCRYPTED_PREFIX,
 };
+use age::secrecy::ExposeSecret;
+
+/// Escapes terminal control characters in values shown to the user.
+fn san(value: &str) -> String {
+    sanitize_for_terminal(value)
+}
+
+fn san_path(path: &Path) -> String {
+    sanitize_for_terminal(&path.display().to_string())
+}
 
 const KEYS_FILE: &str = ".stand.keys";
 const CONFIG_FILE: &str = ".stand.toml";
 
-/// Enable encryption for the project.
+const PLUGIN_MISSING_HINT: &str =
+    "age-plugin-se was not found in PATH. Install it with `brew install age-plugin-se`";
+
+/// Enable encryption for the project (production wrapper).
 ///
-/// Generates a new key pair and adds the public key to .stand.toml.
-pub fn enable_encryption(project_dir: &Path) -> Result<(), EncryptionCommandError> {
-    let config_path = project_dir.join(CONFIG_FILE);
-    let keys_path = project_dir.join(KEYS_FILE);
+/// Creates a passphrase-wrapped identity outside the project and adds the
+/// public key to `.stand.toml`. With `touch_id`, also adds a Touch ID wrap.
+pub fn enable_encryption(project_dir: &Path, touch_id: bool) -> Result<(), EncryptionCommandError> {
+    let ctx = UnlockContext::production()?;
+    enable_encryption_with(project_dir, touch_id, &ctx)
+}
 
-    // Check if config file exists
-    if !config_path.exists() {
-        return Err(EncryptionCommandError::ConfigNotFound);
-    }
-
-    // Parse config with toml_edit to preserve formatting
-    let config_content = fs::read_to_string(&config_path)?;
-    let mut doc: DocumentMut = config_content
-        .parse()
-        .map_err(|e| EncryptionCommandError::TomlParse(format!("{}", e)))?;
-
-    // Check if encryption is already enabled
+/// [`enable_encryption`] with an injected context.
+pub fn enable_encryption_with(
+    project_dir: &Path,
+    touch_id: bool,
+    ctx: &UnlockContext,
+) -> Result<(), EncryptionCommandError> {
+    let (config_path, mut doc) = load_doc(project_dir)?;
     if doc.get("encryption").is_some() {
         return Err(EncryptionCommandError::AlreadyEnabled);
     }
+    let ui = require_ui(ctx)?;
 
-    // Generate key pair
-    let key_pair = generate_key_pair();
+    let (identity, public_key) = crypto_enable::create_passphrase_identity_in(
+        &ctx.env.config_dir,
+        ui.as_ref(),
+        ctx.env.max_work_factor,
+        project_dir,
+    )?;
 
-    // Save private key FIRST — this is the hard-to-recover artifact.
-    // If this fails, no state has changed yet (config is untouched).
-    crate::crypto::keys::save_private_key(&keys_path, &key_pair.private_key)
-        .map_err(EncryptionCommandError::Crypto)?;
-
-    // Add .stand.keys to .gitignore before writing config
-    add_to_gitignore(project_dir, KEYS_FILE)?;
-
-    // Add [encryption] section to config using toml_edit
+    // Add [encryption] section using toml_edit (preserves formatting).
     let mut encryption_table = toml_edit::Table::new();
-    encryption_table.insert("public_key", toml_edit::value(&key_pair.public_key));
+    encryption_table.insert("public_key", toml_edit::value(&public_key));
     doc.insert("encryption", Item::Table(encryption_table));
 
-    // Write config LAST. If this fails, clean up the key file.
+    // Write config LAST. If this fails, roll back the identity files.
     if let Err(e) = fs::write(&config_path, doc.to_string()) {
-        // Roll back: remove the key file we just created
-        if let Err(cleanup_err) = fs::remove_file(&keys_path) {
+        // Only the file created a moment ago is rolled back, by its exact path.
+        if let Err(cleanup_err) =
+            fs::remove_file(store::identity_path_in(&ctx.env.config_dir, &public_key))
+        {
             eprintln!(
-                "Warning: Failed to clean up {} after configuration write error: {}",
-                KEYS_FILE, cleanup_err
-            );
-            eprintln!(
-                "Please manually remove {} to prevent security issues.",
-                keys_path.display()
+                "Warning: Failed to clean up identity files after configuration write error: {}",
+                cleanup_err
             );
         }
         return Err(e.into());
@@ -71,56 +86,217 @@ pub fn enable_encryption(project_dir: &Path) -> Result<(), EncryptionCommandErro
 
     println!("{} Generated key pair", "✓".green());
     println!(
+        "{} Saved passphrase-protected key to {}",
+        "✓".green(),
+        san_path(&store::identity_path_in(&ctx.env.config_dir, &public_key))
+    );
+    println!(
         "{} Added [encryption] section to {}",
         "✓".green(),
         CONFIG_FILE
     );
-    println!("{} Created {}", "✓".green(), KEYS_FILE);
+
+    if touch_id {
+        let setup = if ctx.secure_enclave.is_available() {
+            crypto_enable::add_touch_id_in(
+                &ctx.env.config_dir,
+                ctx.secure_enclave.as_ref(),
+                &identity,
+                &public_key,
+                project_dir,
+            )
+            .map(|_| ())
+        } else {
+            Err(CryptoError::SecureEnclaveUnavailable(
+                PLUGIN_MISSING_HINT.to_string(),
+            ))
+        };
+        match setup {
+            Ok(()) => println!("{} Touch ID enabled", "✓".green()),
+            Err(e) => return Err(EncryptionCommandError::TouchIdSetup(san(&e.to_string()))),
+        }
+    }
 
     Ok(())
 }
 
-/// Disable encryption for the project.
-///
-/// Prompts for user confirmation, then decrypts all encrypted values
-/// and removes encryption configuration. If the user declines, returns Ok(())
-/// without making changes.
-pub fn disable_encryption(project_dir: &Path) -> Result<(), EncryptionCommandError> {
-    let config_path = project_dir.join(CONFIG_FILE);
+/// Migrate a legacy `.stand.keys` into the wrapped identity store (production wrapper).
+pub fn migrate_encryption(project_dir: &Path) -> Result<(), EncryptionCommandError> {
+    let ctx = UnlockContext::production()?;
+    migrate_encryption_with(project_dir, &ctx)
+}
 
-    // Check if config file exists
-    if !config_path.exists() {
-        return Err(EncryptionCommandError::ConfigNotFound);
+/// [`migrate_encryption`] with an injected context.
+///
+/// Values stay untouched: only the private key moves. The legacy file is
+/// removed only after the new wrap was verified by unwrapping it again.
+pub fn migrate_encryption_with(
+    project_dir: &Path,
+    ctx: &UnlockContext,
+) -> Result<(), EncryptionCommandError> {
+    let (_, doc) = load_doc(project_dir)?;
+    let public_key = public_key_from_doc(&doc).ok_or(EncryptionCommandError::NotEnabled)?;
+    store::validate_public_key(&public_key)?;
+
+    let keys_path = project_dir.join(KEYS_FILE);
+    if keys_path.symlink_metadata().is_err() {
+        return Err(EncryptionCommandError::KeysFileNotFound);
+    }
+    // Refuse before anything is written: the file is zero-overwritten at the end.
+    store::check_plain_single_link_file(&keys_path)?;
+    let legacy = keys::parse_private_key(&keys::load_private_key(&keys_path)?)?;
+    if legacy.to_public().to_string() != public_key {
+        return Err(EncryptionCommandError::PublicKeyMismatch {
+            expected: public_key,
+        });
     }
 
-    // Parse config with toml_edit to check encryption status
-    let config_content = fs::read_to_string(&config_path)?;
-    let doc: DocumentMut = config_content
-        .parse()
-        .map_err(|e| EncryptionCommandError::TomlParse(format!("{}", e)))?;
+    let identity_path = store::identity_path_in(&ctx.env.config_dir, &public_key);
+    if identity_path.symlink_metadata().is_ok() {
+        return Err(EncryptionCommandError::IdentityAlreadyExists(san_path(
+            &identity_path,
+        )));
+    }
 
-    // Check if encryption is enabled
+    let ui = require_ui(ctx)?;
+    let passphrase = crypto_enable::prompt_new_passphrase(ui.as_ref())?;
+    store::write_passphrase_identity_in(
+        &ctx.env.config_dir,
+        &public_key,
+        &legacy,
+        &passphrase,
+        ctx.env.max_work_factor,
+        project_dir,
+    )?;
+    if let Err(e) = crypto_enable::verify_passphrase_wrap_in(
+        &ctx.env.config_dir,
+        &public_key,
+        &passphrase,
+        ctx.env.max_work_factor,
+    ) {
+        let _ = fs::remove_file(&identity_path);
+        return Err(e.into());
+    }
+    println!(
+        "{} Saved passphrase-protected key to {}",
+        "✓".green(),
+        san_path(&identity_path)
+    );
+
+    store::wipe_and_delete(&keys_path).map_err(|e| {
+        CryptoError::StoreError(format!(
+            "the wrapped key was saved to {} but {} could not be removed: {}",
+            san_path(&identity_path),
+            KEYS_FILE,
+            san(&e.to_string())
+        ))
+    })?;
+    println!("{} Removed {}", "✓".green(), KEYS_FILE);
+    println!("Hint: run `stand encrypt add-touch-id` to unlock with Touch ID.");
+    Ok(())
+}
+
+/// Add a Touch ID wrap to an existing passphrase identity (production wrapper).
+pub fn add_touch_id(project_dir: &Path) -> Result<(), EncryptionCommandError> {
+    let ctx = UnlockContext::production()?;
+    add_touch_id_with(project_dir, &ctx)
+}
+
+/// [`add_touch_id`] with an injected context.
+pub fn add_touch_id_with(
+    project_dir: &Path,
+    ctx: &UnlockContext,
+) -> Result<(), EncryptionCommandError> {
+    let (_, doc) = load_doc(project_dir)?;
+    let public_key = public_key_from_doc(&doc).ok_or(EncryptionCommandError::NotEnabled)?;
+    store::validate_public_key(&public_key)?;
+
+    let config_dir = &ctx.env.config_dir;
+    let identity_path = store::identity_path_in(config_dir, &public_key);
+    if !identity_path.exists() {
+        return Err(EncryptionCommandError::IdentityNotFound(san_path(
+            &identity_path,
+        )));
+    }
+    let wrapped_path = store::se_wrapped_path_in(config_dir, &public_key);
+    if wrapped_path.exists() {
+        return Err(CryptoError::StoreError(format!(
+            "Touch ID is already set up ({} exists)",
+            san_path(&wrapped_path)
+        ))
+        .into());
+    }
+    require_ui(ctx)?;
+    if !ctx.secure_enclave.is_available() {
+        return Err(CryptoError::SecureEnclaveUnavailable(PLUGIN_MISSING_HINT.to_string()).into());
+    }
+
+    let mut purpose = DecryptPurpose::new("stand encrypt add-touch-id", None);
+    purpose.secret_count = 1;
+    // Writing key material requires an exact binding match: no confirmation path.
+    let mut unlocked = unlock_for_project_exact_with(project_dir, &purpose, ctx)?;
+    let verified = matches!(unlocked.binding, crate::crypto::Binding::Verified(_));
+    let plaintext = match (verified, unlocked.take_wrapped_plaintext()) {
+        (true, Some(p)) => p,
+        _ => {
+            return Err(CryptoError::StoreError(
+                "add-touch-id needs the passphrase-wrapped identity; STAND_PRIVATE_KEY and legacy .stand.keys cannot be re-wrapped"
+                    .to_string(),
+            )
+            .into())
+        }
+    };
+    crypto_enable::add_touch_id_with_plaintext_in(
+        config_dir,
+        ctx.secure_enclave.as_ref(),
+        plaintext.expose_secret(),
+        &public_key,
+    )?;
+    println!("{} Touch ID enabled", "✓".green());
+    Ok(())
+}
+
+/// Disable encryption for the project (production wrapper).
+pub fn disable_encryption(project_dir: &Path) -> Result<(), EncryptionCommandError> {
+    let ctx = UnlockContext::production()?;
+    disable_encryption_with(project_dir, &ctx)
+}
+
+/// [`disable_encryption`] with an injected context.
+///
+/// Prompts for confirmation (on the terminal when there is one, else on
+/// stdin), then decrypts all encrypted values and removes the encryption
+/// configuration. If the user declines, returns Ok(()) without changes.
+pub fn disable_encryption_with(
+    project_dir: &Path,
+    ctx: &UnlockContext,
+) -> Result<(), EncryptionCommandError> {
+    let (_, doc) = load_doc(project_dir)?;
     if doc.get("encryption").is_none() {
         return Err(EncryptionCommandError::NotEnabled);
     }
 
-    // Prompt for confirmation
-    println!(
-        "{} This will decrypt all encrypted values and remove encryption.",
-        "⚠".yellow()
-    );
-    print!("Continue? [y/N]: ");
-    std::io::stdout().flush()?;
-
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    if !input.trim().eq_ignore_ascii_case("y") {
+    let message = "This will decrypt all encrypted values and remove encryption. Continue?";
+    let confirmed = match ctx.ui.as_ref().filter(|_| !ctx.env.force_non_tty) {
+        Some(ui) => ui.confirm(message).unwrap_or(false),
+        None => {
+            println!(
+                "{} This will decrypt all encrypted values and remove encryption.",
+                "⚠".yellow()
+            );
+            print!("Continue? [y/N]: ");
+            std::io::stdout().flush()?;
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            input.trim().eq_ignore_ascii_case("y")
+        }
+    };
+    if !confirmed {
         println!("Aborted.");
         return Ok(());
     }
 
-    // Perform the actual disable operation
-    let result = disable_encryption_internal(project_dir)?;
+    let result = disable_encryption_internal(project_dir, ctx)?;
 
     if result.decrypted_count > 0 {
         println!(
@@ -130,8 +306,20 @@ pub fn disable_encryption(project_dir: &Path) -> Result<(), EncryptionCommandErr
         );
     }
     println!("{} Removed [encryption] section", "✓".green());
+    for path in &result.removed_files {
+        println!("{} Removed {}", "✓".green(), san_path(path));
+    }
+    if !result.kept_files.is_empty() {
+        println!(
+            "{} Kept the key files because this run did not verify that the key belongs to this project:",
+            "⚠".yellow()
+        );
+        for path in &result.kept_files {
+            println!("    {}", san_path(path));
+        }
+        println!("  Delete them manually if you are sure they are no longer needed.");
+    }
     println!("{} Encryption disabled", "✓".green());
-
     Ok(())
 }
 
@@ -140,153 +328,154 @@ pub fn disable_encryption(project_dir: &Path) -> Result<(), EncryptionCommandErr
 pub struct DisableEncryptionResult {
     /// Number of values successfully decrypted.
     pub decrypted_count: usize,
+    /// Key files that were deleted (identity store files and legacy `.stand.keys`).
+    pub removed_files: Vec<PathBuf>,
+    /// Identity store files that were left in place because no unlock in this
+    /// run verified that the key is bound to this project.
+    pub kept_files: Vec<PathBuf>,
 }
 
-/// Internal function to disable encryption without user confirmation.
+/// Disables encryption without asking for confirmation.
 ///
-/// This function is separated to allow testing without interactive prompts.
-/// If no encrypted values exist, the private key is not required.
+/// Separated from [`disable_encryption_with`] to allow testing without
+/// interactive prompts. If no encrypted values exist, nothing is unlocked.
+/// Files are deleted only after the configuration was written successfully.
 pub fn disable_encryption_internal(
     project_dir: &Path,
+    ctx: &UnlockContext,
 ) -> Result<DisableEncryptionResult, EncryptionCommandError> {
-    let config_path = project_dir.join(CONFIG_FILE);
-    let keys_path = project_dir.join(KEYS_FILE);
-
-    // Parse config with toml_edit
-    let config_content = fs::read_to_string(&config_path)?;
-    let mut doc: DocumentMut = config_content
-        .parse()
-        .map_err(|e| EncryptionCommandError::TomlParse(format!("{}", e)))?;
-
-    // Check if encryption is enabled
+    let (config_path, mut doc) = load_doc(project_dir)?;
+    let public_key = public_key_from_doc(&doc);
     if doc.get("encryption").is_none() {
         return Err(EncryptionCommandError::NotEnabled);
     }
 
-    // First, check if there are any encrypted values (read-only scan)
-    let has_encrypted_values = has_encrypted_values_in_doc(&doc);
-
     let mut result = DisableEncryptionResult::default();
+    // Set only by an unlock in this run whose project binding matched.
+    let mut verified: Option<crate::crypto::VerifiedProject> = None;
 
-    // Only load private key if there are encrypted values to decrypt
-    if has_encrypted_values {
-        let private_key = load_private_key_for_decryption(project_dir)?;
-        let identity = crate::crypto::keys::parse_private_key(&private_key)
-            .map_err(EncryptionCommandError::Crypto)?;
+    let secret_count = count_encrypted_values_in_doc(&doc);
+    if secret_count > 0 {
+        let mut purpose = DecryptPurpose::new("stand encrypt disable", None);
+        purpose.secret_count = secret_count;
+        let unlocked = unlock_for_project_verified_with(project_dir, &purpose, ctx)?;
+        let identity = unlocked.identity;
+        verified = match unlocked.binding {
+            crate::crypto::Binding::Verified(proof) => Some(proof),
+            _ => None,
+        };
 
-        // Decrypt all encrypted values in environments section
-        if let Some(environments) = doc.get_mut("environments") {
-            if let Some(env_table) = environments.as_table_mut() {
-                for (_env_name, env_config) in env_table.iter_mut() {
-                    if let Some(env_tbl) = env_config.as_table_mut() {
-                        for (key, value) in env_tbl.iter_mut() {
-                            if let Some(val_str) = value.as_str() {
-                                if val_str.starts_with(ENCRYPTED_PREFIX) {
-                                    let decrypted = crate::crypto::decrypt_value(
-                                        val_str, &identity,
-                                    )
-                                    .map_err(|e| EncryptionCommandError::DecryptionFailed {
-                                        variable: key.to_string(),
-                                        reason: e.to_string(),
-                                    })?;
-                                    *value = Item::Value(Value::from(decrypted));
-                                    result.decrypted_count += 1;
-                                }
-                            }
-                        }
+        let mut decrypt_table =
+            |table: &mut toml_edit::Table| -> Result<(), EncryptionCommandError> {
+                for (key, value) in table.iter_mut() {
+                    let Some(val_str) = value.as_str() else {
+                        continue;
+                    };
+                    if !val_str.starts_with(ENCRYPTED_PREFIX) {
+                        continue;
                     }
+                    let decrypted =
+                        crate::crypto::decrypt_value(val_str, &identity).map_err(|e| {
+                            EncryptionCommandError::DecryptionFailed {
+                                variable: san(&key),
+                                reason: san(&e.to_string()),
+                            }
+                        })?;
+                    *value = Item::Value(Value::from(decrypted));
+                    result.decrypted_count += 1;
+                }
+                Ok(())
+            };
+
+        if let Some(env_table) = doc.get_mut("environments").and_then(|e| e.as_table_mut()) {
+            for (_name, env_config) in env_table.iter_mut() {
+                if let Some(t) = env_config.as_table_mut() {
+                    decrypt_table(t)?;
                 }
             }
         }
-
-        // Also decrypt [common] section
-        if let Some(common) = doc.get_mut("common") {
-            if let Some(common_table) = common.as_table_mut() {
-                for (key, value) in common_table.iter_mut() {
-                    if let Some(val_str) = value.as_str() {
-                        if val_str.starts_with(ENCRYPTED_PREFIX) {
-                            let decrypted = crate::crypto::decrypt_value(val_str, &identity)
-                                .map_err(|e| EncryptionCommandError::DecryptionFailed {
-                                    variable: key.to_string(),
-                                    reason: e.to_string(),
-                                })?;
-                            *value = Item::Value(Value::from(decrypted));
-                            result.decrypted_count += 1;
-                        }
-                    }
-                }
-            }
+        if let Some(t) = doc.get_mut("common").and_then(|c| c.as_table_mut()) {
+            decrypt_table(t)?;
         }
     }
 
-    // Remove [encryption] section using toml_edit
     doc.remove("encryption");
-
-    // Write back preserving formatting
     fs::write(&config_path, doc.to_string())?;
 
-    // Remove .stand.keys file if it exists
-    if keys_path.exists() {
-        fs::remove_file(&keys_path)?;
+    // Config is written. Identity store files are deleted only for the key that
+    // was just unlocked with a matching project binding; anything else is kept.
+    match (&verified, public_key.as_deref()) {
+        (Some(proof), Some(p)) if proof.public_key() == p => {
+            result
+                .removed_files
+                .extend(store::remove_identity_files_in(&ctx.env.config_dir, proof)?);
+        }
+        (_, Some(p)) if store::validate_public_key(p).is_ok() => {
+            result.kept_files.extend(
+                store::identity_file_paths_in(&ctx.env.config_dir, p)
+                    .into_iter()
+                    .filter(|path| path.symlink_metadata().is_ok()),
+            );
+        }
+        _ => {}
+    }
+    let keys_path = project_dir.join(KEYS_FILE);
+    if keys_path.symlink_metadata().is_ok() {
+        store::remove_legacy_key_file(&keys_path)?;
+        result.removed_files.push(keys_path);
     }
 
     Ok(result)
 }
 
-/// Check if the document contains any encrypted values.
-fn has_encrypted_values_in_doc(doc: &DocumentMut) -> bool {
-    // Check environments section
-    if let Some(environments) = doc.get("environments") {
-        if let Some(env_table) = environments.as_table() {
-            for (_env_name, env_config) in env_table.iter() {
-                if let Some(env_tbl) = env_config.as_table() {
-                    for (_key, value) in env_tbl.iter() {
-                        if let Some(val_str) = value.as_str() {
-                            if val_str.starts_with(ENCRYPTED_PREFIX) {
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
+/// Reads and parses `.stand.toml` with toml_edit (preserving formatting).
+fn load_doc(project_dir: &Path) -> Result<(PathBuf, DocumentMut), EncryptionCommandError> {
+    let config_path = project_dir.join(CONFIG_FILE);
+    if !config_path.exists() {
+        return Err(EncryptionCommandError::ConfigNotFound);
     }
-
-    // Check common section
-    if let Some(common) = doc.get("common") {
-        if let Some(common_table) = common.as_table() {
-            for (_key, value) in common_table.iter() {
-                if let Some(val_str) = value.as_str() {
-                    if val_str.starts_with(ENCRYPTED_PREFIX) {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-
-    false
+    let content = fs::read_to_string(&config_path)?;
+    let doc: DocumentMut = content
+        .parse()
+        .map_err(|e| EncryptionCommandError::TomlParse(format!("{}", e)))?;
+    Ok((config_path, doc))
 }
 
-/// Adds a file to .gitignore if not already present.
-fn add_to_gitignore(project_dir: &Path, filename: &str) -> Result<(), std::io::Error> {
-    let gitignore_path = project_dir.join(".gitignore");
+fn public_key_from_doc(doc: &DocumentMut) -> Option<String> {
+    doc.get("encryption")?
+        .get("public_key")?
+        .as_str()
+        .map(str::to_string)
+}
 
-    if gitignore_path.exists() {
-        let content = fs::read_to_string(&gitignore_path)?;
-        if content.lines().any(|line| line.trim() == filename) {
-            return Ok(()); // Already in .gitignore
-        }
-        // Append to existing .gitignore
-        let mut file = fs::OpenOptions::new().append(true).open(&gitignore_path)?;
-        std::io::Write::write_all(&mut file, format!("\n{}\n", filename).as_bytes())?;
-    } else {
-        // Create new .gitignore
-        fs::write(&gitignore_path, format!("{}\n", filename))?;
+/// Returns the terminal UI or [`CryptoError::NoTerminal`].
+fn require_ui(ctx: &UnlockContext) -> Result<std::sync::Arc<dyn UnlockUi>, CryptoError> {
+    match (&ctx.ui, ctx.env.force_non_tty) {
+        (Some(ui), false) => Ok(ui.clone()),
+        _ => Err(CryptoError::NoTerminal),
     }
+}
 
-    println!("{} Added {} to .gitignore", "✓".green(), filename);
-    Ok(())
+/// Counts encrypted values in [environments.*] and [common].
+fn count_encrypted_values_in_doc(doc: &DocumentMut) -> usize {
+    let count_in = |table: &toml_edit::Table| {
+        table
+            .iter()
+            .filter(|(_, v)| v.as_str().is_some_and(|s| s.starts_with(ENCRYPTED_PREFIX)))
+            .count()
+    };
+    let mut total = 0;
+    if let Some(env_table) = doc.get("environments").and_then(|e| e.as_table()) {
+        for (_, env_config) in env_table.iter() {
+            if let Some(t) = env_config.as_table() {
+                total += count_in(t);
+            }
+        }
+    }
+    if let Some(t) = doc.get("common").and_then(|c| c.as_table()) {
+        total += count_in(t);
+    }
+    total
 }
 
 /// Error type for encryption commands.
@@ -300,6 +489,21 @@ pub enum EncryptionCommandError {
 
     #[error("Encryption is not enabled for this project")]
     NotEnabled,
+
+    #[error("No legacy .stand.keys found in the project directory; nothing to migrate")]
+    KeysFileNotFound,
+
+    #[error("The key in .stand.keys does not match the project public key {expected}")]
+    PublicKeyMismatch { expected: String },
+
+    #[error("No passphrase-protected key found at {0}. Run 'stand encrypt migrate' (legacy .stand.keys) or 'stand encrypt enable' first.")]
+    IdentityNotFound(String),
+
+    #[error("A passphrase-protected key already exists at {0}; refusing to overwrite it. Move it away first if you really want to migrate again.")]
+    IdentityAlreadyExists(String),
+
+    #[error("Touch ID setup failed: {0}. Your passphrase setup is complete; run 'stand encrypt add-touch-id' once the problem is fixed.")]
+    TouchIdSetup(String),
 
     #[error("Cryptographic error: {0}")]
     Crypto(#[from] CryptoError),
@@ -317,367 +521,755 @@ pub enum EncryptionCommandError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
+    use crate::crypto::testing::{MockSe, MockUi};
+    use crate::crypto::{store, UnlockEnv, UnlockUi};
+    use age::secrecy::SecretString;
+    use std::sync::Arc;
+    use tempfile::{tempdir, TempDir};
+
+    const WF: u8 = 8;
+    const BASE_CONFIG: &str =
+        "version = \"1.0\"\n\n[environments.dev]\ndescription = \"Development\"\n";
+
+    struct Fixture {
+        _tmp: TempDir,
+        project: std::path::PathBuf,
+        config: std::path::PathBuf,
+    }
+
+    fn fixture() -> Fixture {
+        let tmp = tempdir().unwrap();
+        let project = tmp.path().join("project");
+        let config = tmp.path().join("config");
+        fs::create_dir_all(&project).unwrap();
+        Fixture {
+            _tmp: tmp,
+            project,
+            config,
+        }
+    }
+
+    fn ctx(f: &Fixture, ui: Option<Arc<MockUi>>, se_available: bool) -> UnlockContext {
+        UnlockContext {
+            env: UnlockEnv {
+                ci: None,
+                key_source: None,
+                private_key: None,
+                unlock_mode: None,
+                force_non_tty: false,
+                config_dir: f.config.clone(),
+                max_work_factor: Some(WF),
+            },
+            ui: ui.map(|u| u as Arc<dyn UnlockUi>),
+            secure_enclave: Box::new(MockSe::new(se_available, false)),
+            warn: Arc::new(|_| {}),
+        }
+    }
+
+    fn write_config(f: &Fixture, content: &str) {
+        fs::write(f.project.join(CONFIG_FILE), content).unwrap();
+    }
+
+    fn read_config(f: &Fixture) -> String {
+        fs::read_to_string(f.project.join(CONFIG_FILE)).unwrap()
+    }
+
+    fn public_key_of(f: &Fixture) -> String {
+        crate::crypto::read_project_public_key(&f.project).unwrap()
+    }
+
+    /// Enables encryption through the real code path with passphrase "pw".
+    fn enabled(f: &Fixture) -> String {
+        write_config(f, BASE_CONFIG);
+        let ui = MockUi::new(vec![Some("pw"), Some("pw")]);
+        enable_encryption_with(&f.project, false, &ctx(f, Some(ui), true)).unwrap();
+        public_key_of(f)
+    }
+
+    fn encrypt_for(p: &str, plain: &str) -> String {
+        let r = crate::crypto::keys::parse_public_key(p).unwrap();
+        crate::crypto::encrypt_value(plain, &r).unwrap()
+    }
+
+    // === enable ===
 
     #[test]
-    fn test_enable_encryption_no_config() {
-        let dir = tempdir().unwrap();
-        let result = enable_encryption(dir.path());
-        assert!(matches!(
-            result,
-            Err(EncryptionCommandError::ConfigNotFound)
-        ));
+    fn test_enable_no_config() {
+        let f = fixture();
+        let ui = MockUi::new(vec![]);
+        let r = enable_encryption_with(&f.project, false, &ctx(&f, Some(ui), true));
+        assert!(matches!(r, Err(EncryptionCommandError::ConfigNotFound)));
     }
 
     #[test]
-    fn test_enable_encryption_success() {
-        let dir = tempdir().unwrap();
-        let config_path = dir.path().join(".stand.toml");
+    fn test_enable_creates_wrapped_identity_and_no_keys_file() {
+        let f = fixture();
+        write_config(&f, BASE_CONFIG);
+        let ui = MockUi::new(vec![Some("pw"), Some("pw")]);
+        enable_encryption_with(&f.project, false, &ctx(&f, Some(ui), true)).unwrap();
 
-        // Create minimal config
-        fs::write(
-            &config_path,
-            r#"version = "1.0"
-
-[environments.dev]
-description = "Development"
-"#,
-        )
-        .unwrap();
-
-        let result = enable_encryption(dir.path());
-        assert!(result.is_ok());
-
-        // Check that [encryption] section was added
-        let updated_config = fs::read_to_string(&config_path).unwrap();
-        assert!(updated_config.contains("[encryption]"));
-        assert!(updated_config.contains("public_key = \"age1"));
-
-        // Check that .stand.keys was created
-        let keys_path = dir.path().join(".stand.keys");
-        assert!(keys_path.exists());
+        let config = read_config(&f);
+        assert!(config.contains("[encryption]"));
+        assert!(config.contains("public_key = \"age1"));
+        assert!(config.contains("[environments.dev]"));
+        let p = public_key_of(&f);
+        assert!(store::identity_path_in(&f.config, &p).exists());
+        assert!(!store::se_wrapped_path_in(&f.config, &p).exists());
+        assert!(!f.project.join(KEYS_FILE).exists());
     }
 
     #[test]
-    fn test_enable_encryption_already_enabled() {
-        let dir = tempdir().unwrap();
-        let config_path = dir.path().join(".stand.toml");
-
-        // Create config with encryption already enabled
-        fs::write(
-            &config_path,
-            r#"version = "1.0"
-
-[encryption]
-public_key = "age1test"
-
-[environments.dev]
-description = "Development"
-"#,
-        )
-        .unwrap();
-
-        let result = enable_encryption(dir.path());
-        assert!(matches!(
-            result,
-            Err(EncryptionCommandError::AlreadyEnabled)
-        ));
-    }
-
-    // === Issue 2: Tests for disable_encryption_internal ===
-
-    #[test]
-    fn test_disable_encryption_internal_decrypts_all_values() {
-        let dir = tempdir().unwrap();
-
-        // Generate keys
-        let key_pair = crate::crypto::keys::generate_key_pair();
-        let keys_path = dir.path().join(".stand.keys");
-        crate::crypto::keys::save_private_key(&keys_path, &key_pair.private_key).unwrap();
-
-        // Encrypt test values
-        let recipient = key_pair.to_recipient().unwrap();
-        let encrypted1 = crate::crypto::encrypt_value("secret1", &recipient).unwrap();
-        let encrypted2 = crate::crypto::encrypt_value("secret2", &recipient).unwrap();
-
-        // Create config with encrypted values
-        let config_path = dir.path().join(".stand.toml");
-        fs::write(
-            &config_path,
-            format!(
-                r#"version = "1.0"
-
-[encryption]
-public_key = "{}"
-
-[environments.dev]
-description = "Development"
-API_KEY = "{}"
-DB_PASSWORD = "{}"
-"#,
-                key_pair.public_key, encrypted1, encrypted2
-            ),
-        )
-        .unwrap();
-
-        // Disable encryption
-        let result = disable_encryption_internal(dir.path());
-        assert!(result.is_ok());
-
-        let result = result.unwrap();
-        assert_eq!(result.decrypted_count, 2);
-
-        // Verify the config was updated
-        let updated_config = fs::read_to_string(&config_path).unwrap();
-        assert!(!updated_config.contains("[encryption]"));
-        assert!(!updated_config.contains("encrypted:"));
-        assert!(updated_config.contains("API_KEY = \"secret1\""));
-        assert!(updated_config.contains("DB_PASSWORD = \"secret2\""));
-
-        // Verify .stand.keys was removed
-        assert!(!keys_path.exists());
-    }
-
-    #[test]
-    fn test_disable_encryption_internal_removes_encryption_section() {
-        let dir = tempdir().unwrap();
-
-        // Generate keys (no encrypted values, just testing section removal)
-        let key_pair = crate::crypto::keys::generate_key_pair();
-        let keys_path = dir.path().join(".stand.keys");
-        crate::crypto::keys::save_private_key(&keys_path, &key_pair.private_key).unwrap();
-
-        // Create config with encryption section but no encrypted values
-        let config_path = dir.path().join(".stand.toml");
-        fs::write(
-            &config_path,
-            format!(
-                r#"version = "1.0"
-
-[encryption]
-public_key = "{}"
-
-[environments.dev]
-description = "Development"
-PLAIN_VALUE = "not encrypted"
-"#,
-                key_pair.public_key
-            ),
-        )
-        .unwrap();
-
-        let result = disable_encryption_internal(dir.path());
-        assert!(result.is_ok());
-
-        let result = result.unwrap();
-        assert_eq!(result.decrypted_count, 0);
-
-        // Verify [encryption] section was removed
-        let updated_config = fs::read_to_string(&config_path).unwrap();
-        assert!(!updated_config.contains("[encryption]"));
-        assert!(!updated_config.contains("public_key"));
-
-        // Verify other content is preserved
-        assert!(updated_config.contains("PLAIN_VALUE = \"not encrypted\""));
-    }
-
-    #[test]
-    fn test_disable_encryption_internal_removes_keys_file() {
-        let dir = tempdir().unwrap();
-
-        // Generate keys
-        let key_pair = crate::crypto::keys::generate_key_pair();
-        let keys_path = dir.path().join(".stand.keys");
-        crate::crypto::keys::save_private_key(&keys_path, &key_pair.private_key).unwrap();
-        assert!(keys_path.exists());
-
-        // Create config
-        let config_path = dir.path().join(".stand.toml");
-        fs::write(
-            &config_path,
-            format!(
-                r#"version = "1.0"
-
-[encryption]
-public_key = "{}"
-
-[environments.dev]
-description = "Development"
-"#,
-                key_pair.public_key
-            ),
-        )
-        .unwrap();
-
-        let result = disable_encryption_internal(dir.path());
-        assert!(result.is_ok());
-
-        // Verify .stand.keys was deleted
-        assert!(!keys_path.exists());
-    }
-
-    #[test]
-    fn test_disable_encryption_internal_not_enabled() {
-        let dir = tempdir().unwrap();
-
-        // Create config WITHOUT encryption section
-        let config_path = dir.path().join(".stand.toml");
-        fs::write(
-            &config_path,
-            r#"version = "1.0"
-
-[environments.dev]
-description = "Development"
-"#,
-        )
-        .unwrap();
-
-        let result = disable_encryption_internal(dir.path());
-        assert!(matches!(result, Err(EncryptionCommandError::NotEnabled)));
-    }
-
-    #[test]
-    fn test_disable_encryption_internal_no_private_key() {
-        let dir = tempdir().unwrap();
-
-        // Create config with encryption enabled but NO .stand.keys file
-        let config_path = dir.path().join(".stand.toml");
-        fs::write(
-            &config_path,
-            r#"version = "1.0"
-
-[encryption]
-public_key = "age1test"
-
-[environments.dev]
-description = "Development"
-SECRET = "encrypted:somedata"
-"#,
-        )
-        .unwrap();
-
-        // Note: No .stand.keys file created
-
-        let result = disable_encryption_internal(dir.path());
-        assert!(matches!(result, Err(EncryptionCommandError::Crypto(_))));
-    }
-
-    #[test]
-    fn test_disable_encryption_internal_handles_common_section() {
-        let dir = tempdir().unwrap();
-
-        // Generate keys
-        let key_pair = crate::crypto::keys::generate_key_pair();
-        let keys_path = dir.path().join(".stand.keys");
-        crate::crypto::keys::save_private_key(&keys_path, &key_pair.private_key).unwrap();
-
-        // Encrypt test value
-        let recipient = key_pair.to_recipient().unwrap();
-        let encrypted = crate::crypto::encrypt_value("common-secret", &recipient).unwrap();
-
-        // Create config with encrypted value in [common] section
-        let config_path = dir.path().join(".stand.toml");
-        fs::write(
-            &config_path,
-            format!(
-                r#"version = "1.0"
-
-[encryption]
-public_key = "{}"
-
-[common]
-SHARED_SECRET = "{}"
-
-[environments.dev]
-description = "Development"
-"#,
-                key_pair.public_key, encrypted
-            ),
-        )
-        .unwrap();
-
-        let result = disable_encryption_internal(dir.path());
-        assert!(result.is_ok());
-
-        let result = result.unwrap();
-        assert_eq!(result.decrypted_count, 1);
-
-        // Verify the common section was updated
-        let updated_config = fs::read_to_string(&config_path).unwrap();
-        assert!(updated_config.contains("SHARED_SECRET = \"common-secret\""));
-    }
-
-    #[test]
-    fn test_disable_encryption_internal_fails_on_malformed_value() {
-        let dir = tempdir().unwrap();
-
-        // Generate keys
-        let key_pair = crate::crypto::keys::generate_key_pair();
-        let keys_path = dir.path().join(".stand.keys");
-        crate::crypto::keys::save_private_key(&keys_path, &key_pair.private_key).unwrap();
-
-        // Create config with a malformed encrypted value (not valid ciphertext)
-        let config_path = dir.path().join(".stand.toml");
-        let original_content = format!(
-            r#"version = "1.0"
-
-[encryption]
-public_key = "{}"
-
-[environments.dev]
-description = "Development"
-MALFORMED_SECRET = "encrypted:this-is-not-valid-ciphertext"
-"#,
-            key_pair.public_key
+    fn test_enable_already_enabled() {
+        let f = fixture();
+        write_config(
+            &f,
+            "version = \"1.0\"\n\n[encryption]\npublic_key = \"age1test\"\n",
         );
-        fs::write(&config_path, &original_content).unwrap();
+        let ui = MockUi::new(vec![]);
+        let r = enable_encryption_with(&f.project, false, &ctx(&f, Some(ui), true));
+        assert!(matches!(r, Err(EncryptionCommandError::AlreadyEnabled)));
+    }
 
-        // Attempt to disable encryption - should fail
-        let result = disable_encryption_internal(dir.path());
+    #[test]
+    fn test_enable_requires_terminal() {
+        let f = fixture();
+        write_config(&f, BASE_CONFIG);
+        let r = enable_encryption_with(&f.project, false, &ctx(&f, None, true));
         assert!(matches!(
-            result,
+            r,
+            Err(EncryptionCommandError::Crypto(CryptoError::NoTerminal))
+        ));
+        assert_eq!(read_config(&f), BASE_CONFIG);
+        assert!(!store::identities_dir_in(&f.config).exists());
+    }
+
+    #[test]
+    fn test_enable_passphrase_mismatch_changes_nothing() {
+        let f = fixture();
+        write_config(&f, BASE_CONFIG);
+        let ui = MockUi::new(vec![Some("a"), Some("b")]);
+        let r = enable_encryption_with(&f.project, false, &ctx(&f, Some(ui), true));
+        assert!(r.is_err());
+        assert_eq!(read_config(&f), BASE_CONFIG);
+        assert!(!store::identities_dir_in(&f.config).exists());
+    }
+
+    #[test]
+    fn test_enable_with_touch_id_writes_all_three_files() {
+        let f = fixture();
+        write_config(&f, BASE_CONFIG);
+        let ui = MockUi::new(vec![Some("pw"), Some("pw")]);
+        enable_encryption_with(&f.project, true, &ctx(&f, Some(ui), true)).unwrap();
+        let p = public_key_of(&f);
+        assert!(store::identity_path_in(&f.config, &p).exists());
+        assert!(store::se_identity_path_in(&f.config, &p).exists());
+        assert!(store::se_wrapped_path_in(&f.config, &p).exists());
+    }
+
+    #[test]
+    fn test_enable_touch_id_without_plugin_keeps_passphrase_setup() {
+        let f = fixture();
+        write_config(&f, BASE_CONFIG);
+        let ui = MockUi::new(vec![Some("pw"), Some("pw")]);
+        let r = enable_encryption_with(&f.project, true, &ctx(&f, Some(ui), false));
+        let err = r.unwrap_err();
+        assert!(matches!(err, EncryptionCommandError::TouchIdSetup(_)));
+        let msg = err.to_string();
+        assert!(msg.contains("brew install age-plugin-se"));
+        assert!(msg.contains("passphrase setup is complete"));
+        let p = public_key_of(&f);
+        assert!(store::identity_path_in(&f.config, &p).exists());
+        assert!(!store::se_wrapped_path_in(&f.config, &p).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_enable_rolls_back_identity_when_config_write_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        let f = fixture();
+        write_config(&f, BASE_CONFIG);
+        // Make the config read-only so the final write fails.
+        let path = f.project.join(CONFIG_FILE);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
+        if fs::OpenOptions::new().write(true).open(&path).is_ok() {
+            return; // running as root: permissions are not enforced
+        }
+        let ui = MockUi::new(vec![Some("pw"), Some("pw")]);
+        let r = enable_encryption_with(&f.project, false, &ctx(&f, Some(ui), true));
+        assert!(r.is_err());
+        let dir = store::identities_dir_in(&f.config);
+        let left = fs::read_dir(&dir).map(|d| d.count()).unwrap_or(0);
+        assert_eq!(left, 0, "identity files must be rolled back");
+    }
+
+    // === migrate ===
+
+    fn legacy_setup(f: &Fixture, secret: &str) -> (String, String) {
+        let kp = crate::crypto::keys::generate_key_pair();
+        crate::crypto::keys::save_private_key(&f.project.join(KEYS_FILE), &kp.private_key).unwrap();
+        let enc = encrypt_for(&kp.public_key, secret);
+        write_config(
+            f,
+            &format!(
+                "version = \"1.0\"\n\n[encryption]\npublic_key = \"{}\"\n\n[environments.dev]\ndescription = \"d\"\nSECRET = \"{}\"\n",
+                kp.public_key, enc
+            ),
+        );
+        (kp.public_key, enc)
+    }
+
+    #[test]
+    fn test_migrate_wraps_key_and_removes_keys_file() {
+        let f = fixture();
+        let (p, enc) = legacy_setup(&f, "s3cret");
+        let ui = MockUi::new(vec![Some("pw"), Some("pw")]);
+        let c = ctx(&f, Some(ui), true);
+        migrate_encryption_with(&f.project, &c).unwrap();
+
+        assert!(store::identity_path_in(&f.config, &p).exists());
+        assert!(!f.project.join(KEYS_FILE).exists());
+        assert!(read_config(&f).contains(&enc), "values must be untouched");
+
+        // Values still decrypt through the gate with the new passphrase.
+        let ui = MockUi::new(vec![Some("pw")]);
+        let c = ctx(&f, Some(ui), true);
+        let purpose = DecryptPurpose::new("test", None);
+        let out = crate::crypto::decrypt_single_value_with(&enc, &f.project, &purpose, &c).unwrap();
+        assert_eq!(out, "s3cret");
+    }
+
+    #[test]
+    fn test_migrate_refuses_when_wrapped_identity_already_exists() {
+        let f = fixture();
+        let (p, _) = legacy_setup(&f, "x");
+        store::ensure_identities_dir_in(&f.config).unwrap();
+        let existing = store::identity_path_in(&f.config, &p);
+        fs::write(&existing, b"precious existing wrap").unwrap();
+        let ui = MockUi::new(vec![Some("pw"), Some("pw")]);
+        let r = migrate_encryption_with(&f.project, &ctx(&f, Some(ui.clone()), true));
+        assert!(matches!(
+            r,
+            Err(EncryptionCommandError::IdentityAlreadyExists(_))
+        ));
+        assert_eq!(fs::read(&existing).unwrap(), b"precious existing wrap");
+        assert!(f.project.join(KEYS_FILE).exists());
+        assert_eq!(ui.prompt_count(), 0, "must refuse before prompting");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_migrate_refuses_symlinked_keys_file_and_writes_nothing() {
+        let f = fixture();
+        let (p, _) = legacy_setup(&f, "x");
+        let keys = f.project.join(KEYS_FILE);
+        let target = f.project.join("elsewhere");
+        fs::rename(&keys, &target).unwrap();
+        std::os::unix::fs::symlink(&target, &keys).unwrap();
+        let before = fs::read(&target).unwrap();
+        let ui = MockUi::new(vec![Some("pw"), Some("pw")]);
+        let r = migrate_encryption_with(&f.project, &ctx(&f, Some(ui), true));
+        assert!(r.is_err());
+        assert_eq!(
+            fs::read(&target).unwrap(),
+            before,
+            "target must be unchanged"
+        );
+        assert!(keys.symlink_metadata().is_ok());
+        assert!(!store::identity_path_in(&f.config, &p).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_migrate_refuses_hard_linked_keys_file_and_writes_nothing() {
+        let f = fixture();
+        let (p, _) = legacy_setup(&f, "x");
+        let keys = f.project.join(KEYS_FILE);
+        let other = f.project.join("other-link");
+        fs::hard_link(&keys, &other).unwrap();
+        let before = fs::read(&other).unwrap();
+        let ui = MockUi::new(vec![Some("pw"), Some("pw")]);
+        let r = migrate_encryption_with(&f.project, &ctx(&f, Some(ui), true));
+        assert!(r.is_err());
+        assert_eq!(fs::read(&keys).unwrap(), before);
+        assert_eq!(fs::read(&other).unwrap(), before);
+        assert!(!store::identity_path_in(&f.config, &p).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_disable_unlinks_symlinked_keys_file_without_touching_target() {
+        let f = fixture();
+        let _ = legacy_setup(&f, "legacy-secret");
+        let keys = f.project.join(KEYS_FILE);
+        let target = f.project.join("elsewhere");
+        fs::rename(&keys, &target).unwrap();
+        std::os::unix::fs::symlink(&target, &keys).unwrap();
+        let before = fs::read(&target).unwrap();
+        let c = ctx(&f, Some(MockUi::new(vec![])), true);
+        disable_encryption_internal(&f.project, &c).unwrap();
+        assert!(keys.symlink_metadata().is_err());
+        assert_eq!(fs::read(&target).unwrap(), before);
+    }
+
+    #[test]
+    fn test_migrate_requires_keys_file() {
+        let f = fixture();
+        let _ = enabled(&f);
+        let ui = MockUi::new(vec![]);
+        let r = migrate_encryption_with(&f.project, &ctx(&f, Some(ui), true));
+        assert!(matches!(r, Err(EncryptionCommandError::KeysFileNotFound)));
+    }
+
+    #[test]
+    fn test_migrate_requires_encryption_section() {
+        let f = fixture();
+        write_config(&f, BASE_CONFIG);
+        let kp = crate::crypto::keys::generate_key_pair();
+        crate::crypto::keys::save_private_key(&f.project.join(KEYS_FILE), &kp.private_key).unwrap();
+        let ui = MockUi::new(vec![]);
+        let r = migrate_encryption_with(&f.project, &ctx(&f, Some(ui), true));
+        assert!(matches!(r, Err(EncryptionCommandError::NotEnabled)));
+    }
+
+    #[test]
+    fn test_migrate_rejects_mismatching_legacy_key() {
+        let f = fixture();
+        let _ = legacy_setup(&f, "x");
+        let other = crate::crypto::keys::generate_key_pair();
+        fs::remove_file(f.project.join(KEYS_FILE)).unwrap();
+        crate::crypto::keys::save_private_key(&f.project.join(KEYS_FILE), &other.private_key)
+            .unwrap();
+        let ui = MockUi::new(vec![Some("pw"), Some("pw")]);
+        let r = migrate_encryption_with(&f.project, &ctx(&f, Some(ui), true));
+        assert!(matches!(
+            r,
+            Err(EncryptionCommandError::PublicKeyMismatch { .. })
+        ));
+        assert!(f.project.join(KEYS_FILE).exists());
+    }
+
+    #[test]
+    fn test_migrate_requires_terminal_and_keeps_keys_file() {
+        let f = fixture();
+        let _ = legacy_setup(&f, "x");
+        let r = migrate_encryption_with(&f.project, &ctx(&f, None, true));
+        assert!(matches!(
+            r,
+            Err(EncryptionCommandError::Crypto(CryptoError::NoTerminal))
+        ));
+        assert!(f.project.join(KEYS_FILE).exists());
+    }
+
+    // === add-touch-id ===
+
+    #[test]
+    fn test_add_touch_id_writes_se_files() {
+        let f = fixture();
+        let p = enabled(&f);
+        let ui = MockUi::new(vec![Some("pw")]);
+        add_touch_id_with(&f.project, &ctx(&f, Some(ui), true)).unwrap();
+        assert!(store::se_identity_path_in(&f.config, &p).exists());
+        assert!(store::se_wrapped_path_in(&f.config, &p).exists());
+    }
+
+    #[test]
+    fn test_add_touch_id_in_other_project_is_refused_when_declined() {
+        let f = fixture();
+        let p = enabled(&f);
+        // A second project whose config points at the first project's key.
+        let other = f._tmp.path().join("other");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join(CONFIG_FILE), read_config(&f)).unwrap();
+        let ui = MockUi::new(vec![Some("pw")]);
+        ui.set_confirm(Some(false));
+        let r = add_touch_id_with(&other, &ctx(&f, Some(ui), true));
+        assert!(matches!(
+            r,
+            Err(EncryptionCommandError::Crypto(
+                CryptoError::ProjectMismatch { .. }
+            ))
+        ));
+        assert!(!store::se_wrapped_path_in(&f.config, &p).exists());
+    }
+
+    /// Mock backend that records every plaintext handed to `wrap`.
+    struct CapturingSe {
+        inner: MockSe,
+        wrapped: Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl crate::crypto::touch_id::SecureEnclaveBackend for CapturingSe {
+        fn is_available(&self) -> bool {
+            true
+        }
+        fn keygen(&self) -> Result<crate::crypto::touch_id::SeKeyMaterial, CryptoError> {
+            self.inner.keygen()
+        }
+        fn wrap(&self, recipient: &str, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+            self.wrapped.lock().unwrap().push(plaintext.to_vec());
+            self.inner.wrap(recipient, plaintext)
+        }
+        fn unwrap(
+            &self,
+            identity_file: &str,
+            ciphertext: &[u8],
+            ui: Arc<dyn UnlockUi>,
+        ) -> Result<Vec<u8>, CryptoError> {
+            self.inner.unwrap(identity_file, ciphertext, ui)
+        }
+    }
+
+    fn read_passphrase_plaintext(f: &Fixture, p: &str) -> Vec<u8> {
+        let bytes = fs::read(store::identity_path_in(&f.config, p)).unwrap();
+        store::unwrap_with_passphrase(&bytes, &SecretString::from("pw".to_string()), Some(WF))
+            .unwrap()
+    }
+
+    #[test]
+    fn test_add_touch_id_wraps_the_exact_original_plaintext() {
+        let f = fixture();
+        let p = enabled(&f);
+        // Add a marker line so that regenerating the plaintext cannot match.
+        let mut plain = read_passphrase_plaintext(&f, &p);
+        plain.extend_from_slice(b"# note: original-marker\n");
+        let rewrapped =
+            store::wrap_with_passphrase(&plain, &SecretString::from("pw".to_string()), Some(WF))
+                .unwrap();
+        fs::write(store::identity_path_in(&f.config, &p), rewrapped).unwrap();
+
+        let captured = Arc::new(std::sync::Mutex::new(vec![]));
+        let mut c = ctx(&f, Some(MockUi::new(vec![Some("pw")])), true);
+        c.secure_enclave = Box::new(CapturingSe {
+            inner: MockSe::new(true, false),
+            wrapped: captured.clone(),
+        });
+        add_touch_id_with(&f.project, &c).unwrap();
+        let got = captured.lock().unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0], plain);
+    }
+
+    #[test]
+    fn test_add_touch_id_refuses_confirmed_mismatch_without_prompting() {
+        let f = fixture();
+        let p = enabled(&f);
+        let other = f._tmp.path().join("other");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join(CONFIG_FILE), read_config(&f)).unwrap();
+        let ui = MockUi::new(vec![Some("pw")]);
+        ui.set_confirm(Some(true));
+        let before = fs::read(store::identity_path_in(&f.config, &p)).unwrap();
+        let r = add_touch_id_with(&other, &ctx(&f, Some(ui.clone()), true));
+        assert!(
+            matches!(
+                r,
+                Err(EncryptionCommandError::Crypto(
+                    CryptoError::ProjectMismatch { .. }
+                ))
+            ),
+            "{r:?}"
+        );
+        assert_eq!(ui.confirm_count(), 0);
+        assert!(!store::se_wrapped_path_in(&f.config, &p).exists());
+        assert!(!store::se_identity_path_in(&f.config, &p).exists());
+        assert_eq!(
+            fs::read(store::identity_path_in(&f.config, &p)).unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn test_confirmed_mismatch_read_only_unlock_changes_nothing_on_disk() {
+        let f = fixture();
+        let p = enabled(&f);
+        let other = f._tmp.path().join("other");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join(CONFIG_FILE), read_config(&f)).unwrap();
+        let snapshot = |f: &Fixture| {
+            let mut v = vec![];
+            for path in store::identity_file_paths_in(&f.config, &p) {
+                v.push(fs::read(&path).ok());
+            }
+            v
+        };
+        let before = snapshot(&f);
+        let ui = MockUi::new(vec![Some("pw")]);
+        ui.set_confirm(Some(true));
+        let mut purpose = DecryptPurpose::new("stand get", None);
+        purpose.secret_count = 1;
+        let u = crate::crypto::unlock_for_project_with(
+            &other,
+            &purpose,
+            &ctx(&f, Some(ui.clone()), true),
+        );
+        assert!(u.is_ok());
+        assert_eq!(ui.confirm_count(), 1);
+        assert_eq!(snapshot(&f), before);
+        // A later add-touch-id for that project is still refused.
+        let ui = MockUi::new(vec![Some("pw")]);
+        ui.set_confirm(Some(true));
+        let r = add_touch_id_with(&other, &ctx(&f, Some(ui), true));
+        assert!(r.is_err());
+        assert_eq!(snapshot(&f), before);
+    }
+
+    #[test]
+    fn test_migrate_binds_identity_to_project() {
+        let f = fixture();
+        let (p, _) = legacy_setup(&f, "x");
+        let ui = MockUi::new(vec![Some("pw"), Some("pw")]);
+        migrate_encryption_with(&f.project, &ctx(&f, Some(ui), true)).unwrap();
+        let bytes = fs::read(store::identity_path_in(&f.config, &p)).unwrap();
+        let plain =
+            store::unwrap_with_passphrase(&bytes, &SecretString::from("pw".to_string()), Some(WF))
+                .unwrap();
+        assert_eq!(
+            store::parse_project_binding(&plain).as_deref(),
+            fs::canonicalize(&f.project).unwrap().to_str()
+        );
+    }
+
+    #[test]
+    fn test_add_touch_id_errors_when_already_present() {
+        let f = fixture();
+        let p = enabled(&f);
+        let ui = MockUi::new(vec![Some("pw")]);
+        add_touch_id_with(&f.project, &ctx(&f, Some(ui), true)).unwrap();
+        let ui = MockUi::new(vec![Some("pw")]);
+        let r = add_touch_id_with(&f.project, &ctx(&f, Some(ui), true));
+        assert!(r.is_err());
+        assert!(store::se_wrapped_path_in(&f.config, &p).exists());
+    }
+
+    #[test]
+    fn test_add_touch_id_requires_encryption_and_identity() {
+        let f = fixture();
+        write_config(&f, BASE_CONFIG);
+        let ui = MockUi::new(vec![]);
+        let r = add_touch_id_with(&f.project, &ctx(&f, Some(ui), true));
+        assert!(matches!(r, Err(EncryptionCommandError::NotEnabled)));
+
+        let kp = crate::crypto::keys::generate_key_pair();
+        write_config(
+            &f,
+            &format!(
+                "version = \"1.0\"\n\n[encryption]\npublic_key = \"{}\"\n",
+                kp.public_key
+            ),
+        );
+        let ui = MockUi::new(vec![]);
+        let r = add_touch_id_with(&f.project, &ctx(&f, Some(ui), true));
+        assert!(matches!(
+            r,
+            Err(EncryptionCommandError::IdentityNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn test_add_touch_id_without_plugin_fails_with_hint() {
+        let f = fixture();
+        let _ = enabled(&f);
+        let ui = MockUi::new(vec![Some("pw")]);
+        let r = add_touch_id_with(&f.project, &ctx(&f, Some(ui), false));
+        assert!(r
+            .unwrap_err()
+            .to_string()
+            .contains("brew install age-plugin-se"));
+    }
+
+    // === disable ===
+
+    #[test]
+    fn test_disable_decrypts_values_and_removes_identity_files() {
+        let f = fixture();
+        let p = enabled(&f);
+        let ui = MockUi::new(vec![Some("pw")]);
+        add_touch_id_with(&f.project, &ctx(&f, Some(ui), true)).unwrap();
+
+        let enc1 = encrypt_for(&p, "secret1");
+        let enc2 = encrypt_for(&p, "secret2");
+        let content = read_config(&f);
+        let content = content.replace(
+            "description = \"Development\"\n",
+            &format!("description = \"Development\"\nAPI_KEY = \"{}\"\n", enc1),
+        );
+        write_config(
+            &f,
+            &format!("{}\n[common]\nSHARED = \"{}\"\n", content, enc2),
+        );
+
+        // Touch ID is tried first; the mock backend unwraps without prompting.
+        let ui = MockUi::new(vec![Some("pw")]);
+        let result = disable_encryption_internal(&f.project, &ctx(&f, Some(ui), true)).unwrap();
+        assert_eq!(result.decrypted_count, 2);
+        assert_eq!(result.removed_files.len(), 3);
+
+        let after = read_config(&f);
+        assert!(!after.contains("[encryption]"));
+        assert!(after.contains("API_KEY = \"secret1\""));
+        assert!(after.contains("SHARED = \"secret2\""));
+        assert!(!store::identity_path_in(&f.config, &p).exists());
+        assert!(!store::se_wrapped_path_in(&f.config, &p).exists());
+        assert!(!store::se_identity_path_in(&f.config, &p).exists());
+    }
+
+    #[test]
+    fn test_disable_with_confirmation_declined_changes_nothing() {
+        struct Decline;
+        impl UnlockUi for Decline {
+            fn show(&self, _: &str) {}
+            fn request_passphrase(&self, _: &str) -> Option<SecretString> {
+                None
+            }
+            fn confirm(&self, _: &str) -> Option<bool> {
+                Some(false)
+            }
+        }
+        let f = fixture();
+        let p = enabled(&f);
+        let mut c = ctx(&f, None, true);
+        c.ui = Some(Arc::new(Decline));
+        disable_encryption_with(&f.project, &c).unwrap();
+        assert!(read_config(&f).contains("[encryption]"));
+        assert!(store::identity_path_in(&f.config, &p).exists());
+    }
+
+    #[test]
+    fn test_disable_removes_legacy_keys_file() {
+        let f = fixture();
+        let _ = legacy_setup(&f, "legacy-secret");
+        let c = ctx(&f, Some(MockUi::new(vec![])), true);
+        let result = disable_encryption_internal(&f.project, &c).unwrap();
+        assert_eq!(result.decrypted_count, 1);
+        assert!(!f.project.join(KEYS_FILE).exists());
+        assert!(read_config(&f).contains("SECRET = \"legacy-secret\""));
+    }
+
+    #[test]
+    fn test_disable_error_sanitizes_variable_name() {
+        let f = fixture();
+        let _ = enabled(&f);
+        let content = read_config(&f).replace(
+            "description = \"Development\"\n",
+            "description = \"Development\"\n\"BAD\\u001b[2K\" = \"encrypted:not-valid\"\n",
+        );
+        write_config(&f, &content);
+        let ui = MockUi::new(vec![Some("pw")]);
+        let err = disable_encryption_internal(&f.project, &ctx(&f, Some(ui), true)).unwrap_err();
+        assert!(!err.to_string().contains('\x1b'));
+        assert!(err.to_string().contains("BAD\\x1b[2K"));
+    }
+
+    #[test]
+    fn test_disable_not_enabled() {
+        let f = fixture();
+        write_config(&f, BASE_CONFIG);
+        let c = ctx(&f, Some(MockUi::new(vec![])), true);
+        let r = disable_encryption_internal(&f.project, &c);
+        assert!(matches!(r, Err(EncryptionCommandError::NotEnabled)));
+    }
+
+    #[test]
+    fn test_disable_without_encrypted_values_needs_no_unlock_and_keeps_key_files() {
+        let f = fixture();
+        let p = enabled(&f);
+        let c = ctx(&f, Some(MockUi::new(vec![])), true);
+        let result = disable_encryption_internal(&f.project, &c).unwrap();
+        assert_eq!(result.decrypted_count, 0);
+        assert!(!read_config(&f).contains("[encryption]"));
+        // No unlock happened, so nothing proves the key belongs to this project.
+        assert!(store::identity_path_in(&f.config, &p).exists());
+        assert!(result.removed_files.is_empty());
+        assert_eq!(
+            result.kept_files,
+            vec![store::identity_path_in(&f.config, &p)]
+        );
+    }
+
+    /// A second project whose config points at the first project's key.
+    fn other_project_with_secret(f: &Fixture, p: &str) -> PathBuf {
+        let other = f._tmp.path().join("other");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(
+            other.join(CONFIG_FILE),
+            format!(
+                "version = \"1.0\"\n\n[encryption]\npublic_key = \"{}\"\n\n[environments.dev]\ndescription = \"d\"\nS = \"{}\"\n",
+                p,
+                encrypt_for(p, "v")
+            ),
+        )
+        .unwrap();
+        other
+    }
+
+    #[test]
+    fn test_disable_with_confirmed_binding_mismatch_keeps_key_files() {
+        let f = fixture();
+        let p = enabled(&f);
+        let other = other_project_with_secret(&f, &p);
+        let ui = MockUi::new(vec![Some("pw")]);
+        ui.set_confirm(Some(true));
+        let result = disable_encryption_internal(&other, &ctx(&f, Some(ui), true)).unwrap();
+        assert_eq!(result.decrypted_count, 1);
+        assert!(result.removed_files.is_empty());
+        assert!(store::identity_path_in(&f.config, &p).exists());
+        assert_eq!(result.kept_files.len(), 1);
+        // The first project's own config is untouched.
+        assert!(read_config(&f).contains("[encryption]"));
+    }
+
+    #[test]
+    fn test_disable_with_declined_binding_mismatch_changes_nothing() {
+        let f = fixture();
+        let p = enabled(&f);
+        let other = other_project_with_secret(&f, &p);
+        let before = fs::read_to_string(other.join(CONFIG_FILE)).unwrap();
+        let ui = MockUi::new(vec![Some("pw")]);
+        ui.set_confirm(Some(false));
+        let r = disable_encryption_internal(&other, &ctx(&f, Some(ui), true));
+        assert!(r.is_err());
+        assert_eq!(fs::read_to_string(other.join(CONFIG_FILE)).unwrap(), before);
+        assert!(store::identity_path_in(&f.config, &p).exists());
+    }
+
+    #[test]
+    fn test_disable_with_env_key_unlock_keeps_key_files() {
+        let f = fixture();
+        let p = enabled(&f);
+        // Same key supplied through the CI environment: not a verified binding.
+        let kp = crate::crypto::keys::generate_key_pair();
+        let enc = encrypt_for(&kp.public_key, "ci-secret");
+        let content =
+            read_config(&f).replace(&p, &kp.public_key) + &format!("\n[common]\nC = \"{}\"\n", enc);
+        write_config(&f, &content);
+        let mut c = ctx(&f, None, true);
+        c.env.private_key = Some(kp.private_key.clone());
+        c.env.ci = Some("true".to_string());
+        let result = disable_encryption_internal(&f.project, &c).unwrap();
+        assert_eq!(result.decrypted_count, 1);
+        assert!(result.removed_files.is_empty());
+        // The unrelated key files of `p` are never touched.
+        assert!(store::identity_path_in(&f.config, &p).exists());
+    }
+
+    #[test]
+    fn test_disable_fails_on_malformed_value_and_keeps_everything() {
+        let f = fixture();
+        let p = enabled(&f);
+        let content = read_config(&f);
+        let content = content.replace(
+            "description = \"Development\"\n",
+            "description = \"Development\"\nBAD = \"encrypted:not-valid\"\n",
+        );
+        write_config(&f, &content);
+        let before = read_config(&f);
+        let ui = MockUi::new(vec![Some("pw")]);
+        let r = disable_encryption_internal(&f.project, &ctx(&f, Some(ui), true));
+        assert!(matches!(
+            r,
             Err(EncryptionCommandError::DecryptionFailed { .. })
         ));
-
-        // Verify the config file was NOT modified (still contains encryption section)
-        let config_after = fs::read_to_string(&config_path).unwrap();
-        assert_eq!(config_after, original_content);
-
-        // Verify .stand.keys was NOT deleted
-        assert!(keys_path.exists());
-    }
-
-    #[test]
-    fn test_disable_encryption_internal_succeeds_without_key_when_no_encrypted_values() {
-        let dir = tempdir().unwrap();
-
-        // Create config with encryption enabled but NO encrypted values and NO .stand.keys
-        let config_path = dir.path().join(".stand.toml");
-        fs::write(
-            &config_path,
-            r#"version = "1.0"
-
-[encryption]
-public_key = "age1somekey"
-
-[environments.dev]
-description = "Development"
-PLAIN_VALUE = "not-encrypted"
-"#,
-        )
-        .unwrap();
-
-        // Note: No .stand.keys file exists, but there are no encrypted values either
-
-        let result = disable_encryption_internal(dir.path());
-        assert!(result.is_ok());
-
-        let result = result.unwrap();
-        assert_eq!(result.decrypted_count, 0);
-
-        // Verify [encryption] section was removed
-        let updated_config = fs::read_to_string(&config_path).unwrap();
-        assert!(!updated_config.contains("[encryption]"));
-        assert!(updated_config.contains("PLAIN_VALUE = \"not-encrypted\""));
+        assert_eq!(read_config(&f), before);
+        assert!(store::identity_path_in(&f.config, &p).exists());
     }
 }

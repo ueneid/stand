@@ -1,7 +1,7 @@
 // exec.rs command implementation
 
 use crate::config::loader;
-use crate::crypto::decrypt_variables;
+use crate::crypto::{decrypt_variables, DecryptPurpose};
 use crate::process::executor::CommandExecutor;
 use anyhow::{anyhow, Result};
 use std::io::{self, IsTerminal, Write};
@@ -91,7 +91,11 @@ pub fn execute_with_environment(
     let args = command[1..].to_vec();
 
     // Decrypt any encrypted variables
-    let decrypted_vars = decrypt_variables(env.variables.clone(), project_path)
+    let purpose = DecryptPurpose::new(
+        format!("stand exec {} -- {}", env_name, command.join(" ")),
+        Some(env_name),
+    );
+    let decrypted_vars = decrypt_variables(env.variables.clone(), project_path, &purpose)
         .map_err(|e| anyhow!("Failed to decrypt variables: {}", e))?;
 
     // Execute command with environment variables
