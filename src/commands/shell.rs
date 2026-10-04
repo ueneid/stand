@@ -109,6 +109,9 @@ pub fn validate_shell_environment(
         )
     })?;
 
+    // Refuse code-injecting variable names before confirmation or decryption
+    super::exec::enforce_injection_safety(env.variables.keys().map(String::as_str), "shell")?;
+
     // Check if confirmation is required
     if env.requires_confirmation.unwrap_or(false) && !skip_confirmation {
         // Check if stdin is a terminal - fail fast in non-interactive environments
