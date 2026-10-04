@@ -3,7 +3,12 @@
 //! Values in `.stand.toml` become environment variables of the human's
 //! interactive shell after secrets are unlocked. Anyone who can edit the file
 //! (for example an AI agent) could plant shell or loader hooks that exfiltrate
-//! secrets. The lists here are a speed bump, not a complete defense.
+//! secrets. The lists here are a speed bump, not a complete defense, and they
+//! cannot be complete: new loader and startup hooks exist in every tool.
+//!
+//! Matching is ASCII case-insensitive. `set` rejects Blocked names, but callers
+//! that inject variables into a shell or child process (shell, exec) must also
+//! enforce this module at injection time, because the file can be edited by hand.
 
 /// Keys that are environment settings, not variables.
 pub const RESERVED_KEYS: &[&str] = &["description", "extends", "color", "requires_confirmation"];
@@ -22,6 +27,8 @@ const BLOCKED_EXACT: &[&str] = &[
     "ZDOTDIR",
     "HOME",
     "XDG_CONFIG_HOME",
+    "XDG_DATA_DIRS",
+    "XDG_CONFIG_DIRS",
     "IFS",
 ];
 
@@ -38,6 +45,10 @@ const WARN_EXACT: &[&str] = &[
     "RUBYLIB",
     "GIT_SSH_COMMAND",
     "GIT_EXEC_PATH",
+    "JAVA_TOOL_OPTIONS",
+    "_JAVA_OPTIONS",
+    "NODE_PATH",
+    "PYTHONHOME",
 ];
 
 /// Returns true if `name` is a reserved environment setting key.
@@ -63,11 +74,14 @@ pub enum VariableRisk {
     Blocked,
 }
 
-/// Classify a variable name (case-sensitive).
+/// Classify a variable name (ASCII case-insensitive).
 pub fn classify_variable(name: &str) -> VariableRisk {
-    if BLOCKED_EXACT.contains(&name) || BLOCKED_PREFIXES.iter().any(|p| name.starts_with(p)) {
+    let upper = name.to_ascii_uppercase();
+    if BLOCKED_EXACT.contains(&upper.as_str())
+        || BLOCKED_PREFIXES.iter().any(|p| upper.starts_with(p))
+    {
         VariableRisk::Blocked
-    } else if WARN_EXACT.contains(&name) {
+    } else if WARN_EXACT.contains(&upper.as_str()) {
         VariableRisk::Warn
     } else {
         VariableRisk::Safe
@@ -177,18 +191,41 @@ mod tests {
     }
 
     #[test]
-    fn test_safe_and_case_sensitive() {
-        for n in [
-            "API_KEY",
-            "path",
-            "home",
-            "ld_preload",
-            "LDX",
-            "MY_LD_X",
-            "ENVIRONMENT",
-            "PS5",
-        ] {
+    fn test_safe_names() {
+        for n in ["API_KEY", "LDX", "MY_LD_X", "ENVIRONMENT", "PS5"] {
             assert_eq!(classify_variable(n), VariableRisk::Safe, "{n}");
+        }
+    }
+
+    #[test]
+    fn test_matching_is_ascii_case_insensitive() {
+        for n in [
+            "ld_preload",
+            "Bash_Env",
+            "stand_x",
+            "home",
+            "dyld_insert_libraries",
+            "bash_func_x%%",
+        ] {
+            assert_eq!(classify_variable(n), VariableRisk::Blocked, "{n}");
+        }
+        for n in ["path", "Node_Options", "java_tool_options"] {
+            assert_eq!(classify_variable(n), VariableRisk::Warn, "{n}");
+        }
+    }
+
+    #[test]
+    fn test_extra_blocked_and_warn_entries() {
+        for n in ["XDG_DATA_DIRS", "XDG_CONFIG_DIRS"] {
+            assert_eq!(classify_variable(n), VariableRisk::Blocked, "{n}");
+        }
+        for n in [
+            "JAVA_TOOL_OPTIONS",
+            "_JAVA_OPTIONS",
+            "NODE_PATH",
+            "PYTHONHOME",
+        ] {
+            assert_eq!(classify_variable(n), VariableRisk::Warn, "{n}");
         }
     }
 
