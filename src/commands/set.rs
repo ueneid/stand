@@ -10,8 +10,11 @@ use colored::Colorize;
 use toml_edit::DocumentMut;
 
 use crate::config::{loader, ConfigError};
-use crate::crypto::{encrypt_value, CryptoError};
+use crate::crypto::{
+    decrypt_single_value, encrypt_value, is_encrypted, CryptoError, DecryptPurpose,
+};
 use crate::environment::safety::{self, VariableRisk};
+use crate::shell::{ReflectContext, ShellUpdate};
 
 /// Set a variable in the configuration file.
 ///
@@ -63,11 +66,18 @@ pub fn set_variable(
     let final_value = if encrypt {
         // Check if encryption is enabled
         let public_key = get_public_key(&config_path)?;
+        warn_if_unpinned(project_dir, &public_key);
         let recipient = crate::crypto::keys::parse_public_key(&public_key)?;
         encrypt_value(&plain_value, &recipient)?
     } else {
-        plain_value
+        plain_value.clone()
     };
+
+    // Reflection into the enclosing `stand shell`, if any
+    let reflect = reflect_context_for(project_dir);
+    let before = reflect
+        .as_ref()
+        .and_then(|ctx| effective_value(project_dir, &ctx.environment, key));
 
     // Update the TOML file
     update_toml_variable(&config_path, environment, key, &final_value)?;
@@ -88,7 +98,123 @@ pub fn set_variable(
         );
     }
 
+    if let Some(ctx) = reflect {
+        let written = encrypt.then_some((final_value.as_str(), plain_value.as_str()));
+        reflect_change(
+            &ctx,
+            project_dir,
+            key,
+            before,
+            written,
+            format!("stand set {} {}", ctx.environment, key),
+        );
+    }
+
     Ok(())
+}
+
+/// Warn when no local identity can decrypt what `--encrypt` is about to write.
+fn warn_if_unpinned(project_dir: &Path, public_key: &str) {
+    if project_dir.join(".stand.keys").exists() {
+        return;
+    }
+    let has_identity = crate::crypto::store::config_dir()
+        .map(|dir| {
+            crate::crypto::store::identity_file_paths_in(&dir, public_key)
+                .iter()
+                .any(|p| p.exists())
+        })
+        .unwrap_or(false);
+    if !has_identity {
+        eprintln!(
+            "{} the project's public key does not match any local identity, so this value may only be decryptable by someone else; check [encryption].public_key in .stand.toml",
+            "warning:".yellow()
+        );
+    }
+}
+
+/// The reflect context if this process runs inside a `stand shell` of `project_dir`.
+pub(crate) fn reflect_context_for(project_dir: &Path) -> Option<ReflectContext> {
+    ReflectContext::from_env().filter(|ctx| ctx.applies_to(project_dir))
+}
+
+/// The effective value of `key` in `environment` (inheritance and interpolation applied).
+pub(crate) fn effective_value(
+    project_dir: &Path,
+    environment: &str,
+    key: &str,
+) -> Option<String> {
+    let config = loader::load_config_toml_with_inheritance(project_dir).ok()?;
+    config
+        .environments
+        .get(environment)?
+        .variables
+        .get(key)
+        .cloned()
+}
+
+/// Reflect the change of `key`'s effective value into the enclosing shell.
+///
+/// `written` is `(ciphertext, plaintext)` of the value this command just wrote,
+/// which lets us skip an unlock. Failures only produce warnings: the
+/// configuration was already written.
+pub(crate) fn reflect_change(
+    ctx: &ReflectContext,
+    project_dir: &Path,
+    key: &str,
+    before: Option<String>,
+    written: Option<(&str, &str)>,
+    command: String,
+) {
+    let after = effective_value(project_dir, &ctx.environment, key);
+    if before == after {
+        return;
+    }
+    let update = match after {
+        None => ShellUpdate::Unset {
+            key: key.to_string(),
+        },
+        Some(v) if !is_encrypted(&v) => ShellUpdate::Set {
+            key: key.to_string(),
+            value: v,
+        },
+        Some(v) => match written {
+            Some((cipher, plain)) if cipher == v => ShellUpdate::Set {
+                key: key.to_string(),
+                value: plain.to_string(),
+            },
+            _ => {
+                let purpose = DecryptPurpose {
+                    command,
+                    environment: Some(ctx.environment.clone()),
+                    secret_count: 1,
+                };
+                match decrypt_single_value(&v, project_dir, &purpose) {
+                    Ok(plain) => ShellUpdate::Set {
+                        key: key.to_string(),
+                        value: plain,
+                    },
+                    Err(_) => {
+                        eprintln!(
+                            "{} the inherited encrypted value of {} could not be applied to this shell; restart the stand shell to load it",
+                            "warning:".yellow(),
+                            key
+                        );
+                        ShellUpdate::Unset {
+                            key: key.to_string(),
+                        }
+                    }
+                }
+            }
+        },
+    };
+    if let Err(e) = ctx.emit(&[update]) {
+        eprintln!(
+            "{} could not update the current shell: {}",
+            "warning:".yellow(),
+            e
+        );
+    }
 }
 
 /// Prompts for a secret value without echoing to the terminal.
