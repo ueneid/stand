@@ -17,7 +17,7 @@ use toml_edit::{DocumentMut, Item, Value};
 use crate::crypto::enable as crypto_enable;
 use crate::crypto::ui::sanitize_for_terminal;
 use crate::crypto::{keys, store, CryptoError, DecryptPurpose, UnlockContext, UnlockUi};
-use crate::crypto::{unlock_for_project_with, ENCRYPTED_PREFIX};
+use crate::crypto::{unlock_for_project_verified_with, unlock_for_project_with, ENCRYPTED_PREFIX};
 
 /// Escapes terminal control characters in values shown to the user.
 fn san(value: &str) -> String {
@@ -69,7 +69,9 @@ pub fn enable_encryption_with(
 
     // Write config LAST. If this fails, roll back the identity files.
     if let Err(e) = fs::write(&config_path, doc.to_string()) {
-        if let Err(cleanup_err) = store::remove_identity_files_in(&ctx.env.config_dir, &public_key)
+        // Only the file created a moment ago is rolled back, by its exact path.
+        if let Err(cleanup_err) =
+            fs::remove_file(store::identity_path_in(&ctx.env.config_dir, &public_key))
         {
             eprintln!(
                 "Warning: Failed to clean up identity files after configuration write error: {}",
@@ -293,6 +295,16 @@ pub fn disable_encryption_with(
     for path in &result.removed_files {
         println!("{} Removed {}", "✓".green(), san_path(path));
     }
+    if !result.kept_files.is_empty() {
+        println!(
+            "{} Kept the key files because this run did not verify that the key belongs to this project:",
+            "⚠".yellow()
+        );
+        for path in &result.kept_files {
+            println!("    {}", san_path(path));
+        }
+        println!("  Delete them manually if you are sure they are no longer needed.");
+    }
     println!("{} Encryption disabled", "✓".green());
     Ok(())
 }
@@ -304,6 +316,9 @@ pub struct DisableEncryptionResult {
     pub decrypted_count: usize,
     /// Key files that were deleted (identity store files and legacy `.stand.keys`).
     pub removed_files: Vec<PathBuf>,
+    /// Identity store files that were left in place because no unlock in this
+    /// run verified that the key is bound to this project.
+    pub kept_files: Vec<PathBuf>,
 }
 
 /// Disables encryption without asking for confirmation.
@@ -322,12 +337,19 @@ pub fn disable_encryption_internal(
     }
 
     let mut result = DisableEncryptionResult::default();
+    // Set only by an unlock in this run whose project binding matched.
+    let mut verified: Option<crate::crypto::VerifiedProject> = None;
 
     let secret_count = count_encrypted_values_in_doc(&doc);
     if secret_count > 0 {
         let mut purpose = DecryptPurpose::new("stand encrypt disable", None);
         purpose.secret_count = secret_count;
-        let identity = unlock_for_project_with(project_dir, &purpose, ctx)?;
+        let unlocked = unlock_for_project_verified_with(project_dir, &purpose, ctx)?;
+        let identity = unlocked.identity;
+        verified = match unlocked.binding {
+            crate::crypto::Binding::Verified(proof) => Some(proof),
+            _ => None,
+        };
 
         let mut decrypt_table =
             |table: &mut toml_edit::Table| -> Result<(), EncryptionCommandError> {
@@ -366,13 +388,22 @@ pub fn disable_encryption_internal(
     doc.remove("encryption");
     fs::write(&config_path, doc.to_string())?;
 
-    // Config is written; now delete the key material.
-    if let Some(p) = public_key.as_deref() {
-        if store::validate_public_key(p).is_ok() {
+    // Config is written. Identity store files are deleted only for the key that
+    // was just unlocked with a matching project binding; anything else is kept.
+    match (&verified, public_key.as_deref()) {
+        (Some(proof), Some(p)) if proof.public_key() == p => {
             result
                 .removed_files
-                .extend(store::remove_identity_files_in(&ctx.env.config_dir, p)?);
+                .extend(store::remove_identity_files_in(&ctx.env.config_dir, proof)?);
         }
+        (_, Some(p)) if store::validate_public_key(p).is_ok() => {
+            result.kept_files.extend(
+                store::identity_file_paths_in(&ctx.env.config_dir, p)
+                    .into_iter()
+                    .filter(|path| path.symlink_metadata().is_ok()),
+            );
+        }
+        _ => {}
     }
     let keys_path = project_dir.join(KEYS_FILE);
     if keys_path.symlink_metadata().is_ok() {
@@ -1004,14 +1035,86 @@ mod tests {
     }
 
     #[test]
-    fn test_disable_without_encrypted_values_needs_no_unlock() {
+    fn test_disable_without_encrypted_values_needs_no_unlock_and_keeps_key_files() {
         let f = fixture();
         let p = enabled(&f);
         let c = ctx(&f, Some(MockUi::new(vec![])), true);
         let result = disable_encryption_internal(&f.project, &c).unwrap();
         assert_eq!(result.decrypted_count, 0);
         assert!(!read_config(&f).contains("[encryption]"));
-        assert!(!store::identity_path_in(&f.config, &p).exists());
+        // No unlock happened, so nothing proves the key belongs to this project.
+        assert!(store::identity_path_in(&f.config, &p).exists());
+        assert!(result.removed_files.is_empty());
+        assert_eq!(
+            result.kept_files,
+            vec![store::identity_path_in(&f.config, &p)]
+        );
+    }
+
+    /// A second project whose config points at the first project's key.
+    fn other_project_with_secret(f: &Fixture, p: &str) -> PathBuf {
+        let other = f._tmp.path().join("other");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(
+            other.join(CONFIG_FILE),
+            format!(
+                "version = \"1.0\"\n\n[encryption]\npublic_key = \"{}\"\n\n[environments.dev]\ndescription = \"d\"\nS = \"{}\"\n",
+                p,
+                encrypt_for(p, "v")
+            ),
+        )
+        .unwrap();
+        other
+    }
+
+    #[test]
+    fn test_disable_with_confirmed_binding_mismatch_keeps_key_files() {
+        let f = fixture();
+        let p = enabled(&f);
+        let other = other_project_with_secret(&f, &p);
+        let ui = MockUi::new(vec![Some("pw")]);
+        ui.set_confirm(Some(true));
+        let result = disable_encryption_internal(&other, &ctx(&f, Some(ui), true)).unwrap();
+        assert_eq!(result.decrypted_count, 1);
+        assert!(result.removed_files.is_empty());
+        assert!(store::identity_path_in(&f.config, &p).exists());
+        assert_eq!(result.kept_files.len(), 1);
+        // The first project's own config is untouched.
+        assert!(read_config(&f).contains("[encryption]"));
+    }
+
+    #[test]
+    fn test_disable_with_declined_binding_mismatch_changes_nothing() {
+        let f = fixture();
+        let p = enabled(&f);
+        let other = other_project_with_secret(&f, &p);
+        let before = fs::read_to_string(other.join(CONFIG_FILE)).unwrap();
+        let ui = MockUi::new(vec![Some("pw")]);
+        ui.set_confirm(Some(false));
+        let r = disable_encryption_internal(&other, &ctx(&f, Some(ui), true));
+        assert!(r.is_err());
+        assert_eq!(fs::read_to_string(other.join(CONFIG_FILE)).unwrap(), before);
+        assert!(store::identity_path_in(&f.config, &p).exists());
+    }
+
+    #[test]
+    fn test_disable_with_env_key_unlock_keeps_key_files() {
+        let f = fixture();
+        let p = enabled(&f);
+        // Same key supplied through the CI environment: not a verified binding.
+        let kp = crate::crypto::keys::generate_key_pair();
+        let enc = encrypt_for(&kp.public_key, "ci-secret");
+        let content =
+            read_config(&f).replace(&p, &kp.public_key) + &format!("\n[common]\nC = \"{}\"\n", enc);
+        write_config(&f, &content);
+        let mut c = ctx(&f, None, true);
+        c.env.private_key = Some(kp.private_key.clone());
+        c.env.ci = Some("true".to_string());
+        let result = disable_encryption_internal(&f.project, &c).unwrap();
+        assert_eq!(result.decrypted_count, 1);
+        assert!(result.removed_files.is_empty());
+        // The unrelated key files of `p` are never touched.
+        assert!(store::identity_path_in(&f.config, &p).exists());
     }
 
     #[test]

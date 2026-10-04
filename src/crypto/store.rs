@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use age::secrecy::{ExposeSecret, SecretString};
 use age::x25519;
 
+use super::unlock::VerifiedProject;
 use super::CryptoError;
 
 /// Current UTC time as an RFC 3339 string (used in the identity file header).
@@ -361,19 +362,21 @@ pub fn write_passphrase_identity(
     )
 }
 
-/// Removes all identity files for `public_key`; returns the paths that were removed.
+/// Removes all identity files of the key that `proof` verified; returns the
+/// paths that were removed.
+///
+/// Requiring a [`VerifiedProject`] makes it impossible to delete the files of
+/// a key that was not unlocked, with a matching project binding, in this run.
+/// Each file is unlinked by its own path (a symlink is never followed).
 pub fn remove_identity_files_in(
     config_dir: &Path,
-    public_key: &str,
+    proof: &VerifiedProject,
 ) -> Result<Vec<PathBuf>, CryptoError> {
+    let public_key = proof.public_key();
     validate_public_key(public_key)?;
     let mut removed = vec![];
-    for path in [
-        identity_path_in(config_dir, public_key),
-        se_wrapped_path_in(config_dir, public_key),
-        se_identity_path_in(config_dir, public_key),
-    ] {
-        if path.exists() {
+    for path in identity_file_paths_in(config_dir, public_key) {
+        if path.symlink_metadata().is_ok() {
             fs::remove_file(&path)?;
             removed.push(path);
         }
@@ -382,8 +385,17 @@ pub fn remove_identity_files_in(
 }
 
 /// [`remove_identity_files_in`] for the current process environment.
-pub fn remove_identity_files(public_key: &str) -> Result<Vec<PathBuf>, CryptoError> {
-    remove_identity_files_in(&config_dir()?, public_key)
+pub fn remove_identity_files(proof: &VerifiedProject) -> Result<Vec<PathBuf>, CryptoError> {
+    remove_identity_files_in(&config_dir()?, proof)
+}
+
+/// The three identity file paths for `public_key` (they may not exist).
+pub fn identity_file_paths_in(config_dir: &Path, public_key: &str) -> [PathBuf; 3] {
+    [
+        identity_path_in(config_dir, public_key),
+        se_wrapped_path_in(config_dir, public_key),
+        se_identity_path_in(config_dir, public_key),
+    ]
 }
 
 /// Checks that `path` is safe to overwrite in place: a regular file (not a
@@ -630,10 +642,13 @@ mod tests {
             .unwrap();
         fs::write(se_identity_path_in(tmp.path(), &p), "x").unwrap();
 
-        let removed = remove_identity_files_in(tmp.path(), &p).unwrap();
+        let proof = VerifiedProject::for_test(&p);
+        let removed = remove_identity_files_in(tmp.path(), &proof).unwrap();
         assert_eq!(removed.len(), 2);
         assert!(!identity_path_in(tmp.path(), &p).exists());
-        assert!(remove_identity_files_in(tmp.path(), &p).unwrap().is_empty());
+        assert!(remove_identity_files_in(tmp.path(), &proof)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
