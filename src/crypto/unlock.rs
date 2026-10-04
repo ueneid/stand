@@ -9,7 +9,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use age::secrecy::SecretString;
+use age::secrecy::{SecretSlice, SecretString};
 use age::x25519;
 
 use super::store::{self, UnwrapError};
@@ -136,13 +136,31 @@ pub enum Binding {
     NotApplicable,
 }
 
+/// What the gate does when the project binding does not match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BindingPolicy {
+    /// Read-only decryption: the human may confirm a single run (changes nothing on disk).
+    ConfirmMismatch,
+    /// Operations that write or delete key material: no prompt, mismatch is an error.
+    RequireExact,
+}
+
 /// Result of a successful unlock.
 pub struct Unlocked {
     pub identity: x25519::Identity,
     pub binding: Binding,
+    /// The exact plaintext that was wrapped (including its `# project:` line).
+    /// Only re-wrapping (add-touch-id) may use it; see [`Unlocked::take_wrapped_plaintext`].
+    wrapped_plaintext: Option<SecretSlice<u8>>,
 }
 
 impl Unlocked {
+    /// Hands out the original unwrapped identity file bytes (once), so a
+    /// re-wrap preserves the recorded project binding instead of regenerating it.
+    pub(crate) fn take_wrapped_plaintext(&mut self) -> Option<SecretSlice<u8>> {
+        self.wrapped_plaintext.take()
+    }
+
     /// The proof, only when the binding matched cleanly.
     pub fn verified(&self) -> Option<&VerifiedProject> {
         match &self.binding {
@@ -180,10 +198,46 @@ pub fn unlock_project_identity_verified_with(
     purpose: &DecryptPurpose,
     ctx: &UnlockContext,
 ) -> Result<Unlocked, CryptoError> {
+    unlock_inner(
+        project_dir,
+        public_key,
+        purpose,
+        ctx,
+        BindingPolicy::ConfirmMismatch,
+    )
+}
+
+/// Like [`unlock_project_identity_verified_with`] for operations that write or
+/// delete key material (add-touch-id, re-wrapping). A binding mismatch is
+/// refused with [`CryptoError::ProjectMismatch`] without asking the human:
+/// a one-time confirmation must never become a permanent re-binding.
+pub fn unlock_project_identity_exact_with(
+    project_dir: &Path,
+    public_key: Option<&str>,
+    purpose: &DecryptPurpose,
+    ctx: &UnlockContext,
+) -> Result<Unlocked, CryptoError> {
+    unlock_inner(
+        project_dir,
+        public_key,
+        purpose,
+        ctx,
+        BindingPolicy::RequireExact,
+    )
+}
+
+fn unlock_inner(
+    project_dir: &Path,
+    public_key: Option<&str>,
+    purpose: &DecryptPurpose,
+    ctx: &UnlockContext,
+    policy: BindingPolicy,
+) -> Result<Unlocked, CryptoError> {
     let env = &ctx.env;
     let not_applicable = |identity| Unlocked {
         identity,
         binding: Binding::NotApplicable,
+        wrapped_plaintext: None,
     };
 
     // 1. Environment key, only in CI or when explicitly requested.
@@ -247,8 +301,8 @@ pub fn unlock_project_identity_verified_with(
             ));
         }
         match try_touch_id(ctx, &se_identity, &se_wrapped, ui.clone()) {
-            Ok((identity, bound)) => {
-                return finish_wrapped(identity, bound, public_key, project_dir, ui.as_ref())
+            Ok(plain) => {
+                return finish_wrapped(plain, public_key, project_dir, ui.as_ref(), policy)
             }
             Err(reason) => ui.show(&format!(
                 "Touch ID unlock failed: {}. Falling back to passphrase.",
@@ -260,9 +314,8 @@ pub fn unlock_project_identity_verified_with(
     // 6. Passphrase.
     if passphrase_file.exists() {
         let ciphertext = std::fs::read(&passphrase_file)?;
-        let (identity, bound) =
-            unlock_with_passphrase(&ciphertext, ui.as_ref(), env.max_work_factor)?;
-        return finish_wrapped(identity, bound, public_key, project_dir, ui.as_ref());
+        let plain = unlock_with_passphrase(&ciphertext, ui.as_ref(), env.max_work_factor)?;
+        return finish_wrapped(plain, public_key, project_dir, ui.as_ref(), policy);
     }
 
     // 8. Nothing usable.
@@ -274,36 +327,49 @@ pub fn unlock_project_identity_verified_with(
     })
 }
 
+/// An unwrapped identity file: the parsed identity, its recorded project and the raw bytes.
+struct UnwrappedIdentity {
+    identity: x25519::Identity,
+    bound: Option<String>,
+    plaintext: SecretSlice<u8>,
+}
+
+impl UnwrappedIdentity {
+    fn from_plaintext(plaintext: Vec<u8>) -> Result<Self, CryptoError> {
+        Ok(Self {
+            identity: store::parse_identity_file_contents(&plaintext)?,
+            bound: store::parse_project_binding(&plaintext),
+            plaintext: SecretSlice::from(plaintext),
+        })
+    }
+}
+
 fn try_touch_id(
     ctx: &UnlockContext,
     se_identity: &Path,
     se_wrapped: &Path,
     ui: Arc<dyn UnlockUi>,
-) -> Result<(x25519::Identity, Option<String>), String> {
+) -> Result<UnwrappedIdentity, String> {
     let identity_file = std::fs::read_to_string(se_identity).map_err(|e| e.to_string())?;
     let ciphertext = std::fs::read(se_wrapped).map_err(|e| e.to_string())?;
     let plaintext = ctx
         .secure_enclave
         .unwrap(&identity_file, &ciphertext, ui)
         .map_err(|e| e.to_string())?;
-    let identity = store::parse_identity_file_contents(&plaintext).map_err(|e| e.to_string())?;
-    Ok((identity, store::parse_project_binding(&plaintext)))
+    UnwrappedIdentity::from_plaintext(plaintext).map_err(|e| e.to_string())
 }
 
 fn unlock_with_passphrase(
     ciphertext: &[u8],
     ui: &dyn UnlockUi,
     max_work_factor: Option<u8>,
-) -> Result<(x25519::Identity, Option<String>), CryptoError> {
+) -> Result<UnwrappedIdentity, CryptoError> {
     for attempt in 1..=MAX_PASSPHRASE_ATTEMPTS {
         let passphrase: SecretString = ui
             .request_passphrase("Enter passphrase to unlock the stand key:")
             .ok_or_else(|| CryptoError::UnlockFailed("passphrase entry cancelled".to_string()))?;
         match store::unwrap_with_passphrase(ciphertext, &passphrase, max_work_factor) {
-            Ok(plain) => {
-                let identity = store::parse_identity_file_contents(&plain)?;
-                return Ok((identity, store::parse_project_binding(&plain)));
-            }
+            Ok(plain) => return UnwrappedIdentity::from_plaintext(plain),
             Err(UnwrapError::WrongPassphrase) => {
                 if attempt < MAX_PASSPHRASE_ATTEMPTS {
                     ui.show("Incorrect passphrase. Try again.");
@@ -323,16 +389,22 @@ fn unlock_with_passphrase(
 /// Checks the identity against the public key and its project binding.
 ///
 /// A mismatching or missing `# project:` line is shown to the human, who must
-/// explicitly confirm (default No). The agent-editable `[encryption].public_key`
+/// explicitly confirm (default No) for read-only decryption; with
+/// [`BindingPolicy::RequireExact`] it is refused without asking. The agent-editable `[encryption].public_key`
 /// selects the identity, so this stops a rewritten config from reusing a key
 /// that belongs to another project.
 fn finish_wrapped(
-    identity: x25519::Identity,
-    bound: Option<String>,
+    plain: UnwrappedIdentity,
     public_key: &str,
     project_dir: &Path,
     ui: &dyn UnlockUi,
+    policy: BindingPolicy,
 ) -> Result<Unlocked, CryptoError> {
+    let UnwrappedIdentity {
+        identity,
+        bound,
+        plaintext,
+    } = plain;
     let identity = check_identity(identity, public_key)?;
     let current = store::canonical_project_dir(project_dir)?;
     let matches = bound.as_deref().is_some_and(|b| {
@@ -348,6 +420,7 @@ fn finish_wrapped(
             binding: Binding::Verified(VerifiedProject {
                 public_key: public_key.to_string(),
             }),
+            wrapped_plaintext: Some(plaintext),
         });
     }
 
@@ -356,6 +429,12 @@ fn finish_wrapped(
         .map(sanitize_for_terminal)
         .unwrap_or_else(|| "(none recorded)".to_string());
     let current_shown = sanitize_for_terminal(&current);
+    if policy == BindingPolicy::RequireExact {
+        return Err(CryptoError::ProjectMismatch {
+            bound: bound_shown,
+            current: current_shown,
+        });
+    }
     ui.show(&format!(
         "WARNING: this key was created for project {} but you are unlocking it for {}. \
          A changed .stand.toml may be trying to use a key from another project.",
@@ -368,6 +447,7 @@ fn finish_wrapped(
         Ok(Unlocked {
             identity,
             binding: Binding::Confirmed,
+            wrapped_plaintext: None,
         })
     } else {
         Err(CryptoError::ProjectMismatch {
@@ -932,6 +1012,52 @@ mod tests {
         let shown = ui.shown_messages().join("\n");
         assert!(shown.contains(other.to_str().unwrap()));
         assert!(shown.contains(std::fs::canonicalize(&f.project).unwrap().to_str().unwrap()));
+    }
+
+    #[test]
+    fn test_exact_unlock_refuses_mismatch_without_prompting_and_names_both_paths() {
+        let f = fixture();
+        let other = write_pass_wrap_for_other_project(&f, "pw");
+        let ui = MockUi::new(vec![Some("pw")]);
+        ui.set_confirm(Some(true));
+        let c = ctx(
+            env_for(&f),
+            Some(ui.clone()),
+            MockSe::new(false, false),
+            no_warnings(),
+        );
+        let r = unlock_project_identity_exact_with(&f.project, Some(&f.public_key), &purpose(), &c);
+        let msg = match r {
+            Err(e @ CryptoError::ProjectMismatch { .. }) => e.to_string(),
+            _ => panic!("expected ProjectMismatch"),
+        };
+        assert_eq!(ui.confirm_count(), 0);
+        assert!(msg.contains(other.to_str().unwrap()), "{msg}");
+        assert!(msg.contains(std::fs::canonicalize(&f.project).unwrap().to_str().unwrap()));
+    }
+
+    #[test]
+    fn test_exact_unlock_with_matching_binding_carries_original_plaintext() {
+        let f = fixture();
+        write_pass_wrap(&f, "pw");
+        let ui = MockUi::new(vec![Some("pw")]);
+        let c = ctx(
+            env_for(&f),
+            Some(ui.clone()),
+            MockSe::new(false, false),
+            no_warnings(),
+        );
+        let mut u =
+            unlock_project_identity_exact_with(&f.project, Some(&f.public_key), &purpose(), &c)
+                .unwrap();
+        assert!(u.verified().is_some());
+        let bytes = std::fs::read(store::identity_path_in(&f.config, &f.public_key)).unwrap();
+        let expected =
+            store::unwrap_with_passphrase(&bytes, &SecretString::from("pw".to_string()), Some(WF))
+                .unwrap();
+        let got = u.take_wrapped_plaintext().unwrap();
+        assert_eq!(got.expose_secret(), &expected[..]);
+        assert!(u.take_wrapped_plaintext().is_none());
     }
 
     #[test]

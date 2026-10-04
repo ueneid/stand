@@ -17,7 +17,10 @@ use toml_edit::{DocumentMut, Item, Value};
 use crate::crypto::enable as crypto_enable;
 use crate::crypto::ui::sanitize_for_terminal;
 use crate::crypto::{keys, store, CryptoError, DecryptPurpose, UnlockContext, UnlockUi};
-use crate::crypto::{unlock_for_project_verified_with, unlock_for_project_with, ENCRYPTED_PREFIX};
+use crate::crypto::{
+    unlock_for_project_exact_with, unlock_for_project_verified_with, ENCRYPTED_PREFIX,
+};
+use age::secrecy::ExposeSecret;
 
 /// Escapes terminal control characters in values shown to the user.
 fn san(value: &str) -> String {
@@ -230,13 +233,24 @@ pub fn add_touch_id_with(
 
     let mut purpose = DecryptPurpose::new("stand encrypt add-touch-id", None);
     purpose.secret_count = 1;
-    let identity = unlock_for_project_with(project_dir, &purpose, ctx)?;
-    crypto_enable::add_touch_id_in(
+    // Writing key material requires an exact binding match: no confirmation path.
+    let mut unlocked = unlock_for_project_exact_with(project_dir, &purpose, ctx)?;
+    let verified = matches!(unlocked.binding, crate::crypto::Binding::Verified(_));
+    let plaintext = match (verified, unlocked.take_wrapped_plaintext()) {
+        (true, Some(p)) => p,
+        _ => {
+            return Err(CryptoError::StoreError(
+                "add-touch-id needs the passphrase-wrapped identity; STAND_PRIVATE_KEY and legacy .stand.keys cannot be re-wrapped"
+                    .to_string(),
+            )
+            .into())
+        }
+    };
+    crypto_enable::add_touch_id_with_plaintext_in(
         config_dir,
         ctx.secure_enclave.as_ref(),
-        &identity,
+        plaintext.expose_secret(),
         &public_key,
-        project_dir,
     )?;
     println!("{} Touch ID enabled", "✓".green());
     Ok(())
@@ -876,6 +890,127 @@ mod tests {
             ))
         ));
         assert!(!store::se_wrapped_path_in(&f.config, &p).exists());
+    }
+
+    /// Mock backend that records every plaintext handed to `wrap`.
+    struct CapturingSe {
+        inner: MockSe,
+        wrapped: Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl crate::crypto::touch_id::SecureEnclaveBackend for CapturingSe {
+        fn is_available(&self) -> bool {
+            true
+        }
+        fn keygen(&self) -> Result<crate::crypto::touch_id::SeKeyMaterial, CryptoError> {
+            self.inner.keygen()
+        }
+        fn wrap(&self, recipient: &str, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+            self.wrapped.lock().unwrap().push(plaintext.to_vec());
+            self.inner.wrap(recipient, plaintext)
+        }
+        fn unwrap(
+            &self,
+            identity_file: &str,
+            ciphertext: &[u8],
+            ui: Arc<dyn UnlockUi>,
+        ) -> Result<Vec<u8>, CryptoError> {
+            self.inner.unwrap(identity_file, ciphertext, ui)
+        }
+    }
+
+    fn read_passphrase_plaintext(f: &Fixture, p: &str) -> Vec<u8> {
+        let bytes = fs::read(store::identity_path_in(&f.config, p)).unwrap();
+        store::unwrap_with_passphrase(&bytes, &SecretString::from("pw".to_string()), Some(WF))
+            .unwrap()
+    }
+
+    #[test]
+    fn test_add_touch_id_wraps_the_exact_original_plaintext() {
+        let f = fixture();
+        let p = enabled(&f);
+        // Add a marker line so that regenerating the plaintext cannot match.
+        let mut plain = read_passphrase_plaintext(&f, &p);
+        plain.extend_from_slice(b"# note: original-marker\n");
+        let rewrapped =
+            store::wrap_with_passphrase(&plain, &SecretString::from("pw".to_string()), Some(WF))
+                .unwrap();
+        fs::write(store::identity_path_in(&f.config, &p), rewrapped).unwrap();
+
+        let captured = Arc::new(std::sync::Mutex::new(vec![]));
+        let mut c = ctx(&f, Some(MockUi::new(vec![Some("pw")])), true);
+        c.secure_enclave = Box::new(CapturingSe {
+            inner: MockSe::new(true, false),
+            wrapped: captured.clone(),
+        });
+        add_touch_id_with(&f.project, &c).unwrap();
+        let got = captured.lock().unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0], plain);
+    }
+
+    #[test]
+    fn test_add_touch_id_refuses_confirmed_mismatch_without_prompting() {
+        let f = fixture();
+        let p = enabled(&f);
+        let other = f._tmp.path().join("other");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join(CONFIG_FILE), read_config(&f)).unwrap();
+        let ui = MockUi::new(vec![Some("pw")]);
+        ui.set_confirm(Some(true));
+        let before = fs::read(store::identity_path_in(&f.config, &p)).unwrap();
+        let r = add_touch_id_with(&other, &ctx(&f, Some(ui.clone()), true));
+        assert!(
+            matches!(
+                r,
+                Err(EncryptionCommandError::Crypto(
+                    CryptoError::ProjectMismatch { .. }
+                ))
+            ),
+            "{r:?}"
+        );
+        assert_eq!(ui.confirm_count(), 0);
+        assert!(!store::se_wrapped_path_in(&f.config, &p).exists());
+        assert!(!store::se_identity_path_in(&f.config, &p).exists());
+        assert_eq!(
+            fs::read(store::identity_path_in(&f.config, &p)).unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn test_confirmed_mismatch_read_only_unlock_changes_nothing_on_disk() {
+        let f = fixture();
+        let p = enabled(&f);
+        let other = f._tmp.path().join("other");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join(CONFIG_FILE), read_config(&f)).unwrap();
+        let snapshot = |f: &Fixture| {
+            let mut v = vec![];
+            for path in store::identity_file_paths_in(&f.config, &p) {
+                v.push(fs::read(&path).ok());
+            }
+            v
+        };
+        let before = snapshot(&f);
+        let ui = MockUi::new(vec![Some("pw")]);
+        ui.set_confirm(Some(true));
+        let mut purpose = DecryptPurpose::new("stand get", None);
+        purpose.secret_count = 1;
+        let u = crate::crypto::unlock_for_project_with(
+            &other,
+            &purpose,
+            &ctx(&f, Some(ui.clone()), true),
+        );
+        assert!(u.is_ok());
+        assert_eq!(ui.confirm_count(), 1);
+        assert_eq!(snapshot(&f), before);
+        // A later add-touch-id for that project is still refused.
+        let ui = MockUi::new(vec![Some("pw")]);
+        ui.set_confirm(Some(true));
+        let r = add_touch_id_with(&other, &ctx(&f, Some(ui), true));
+        assert!(r.is_err());
+        assert_eq!(snapshot(&f), before);
     }
 
     #[test]

@@ -22,8 +22,9 @@ pub use touch_id::{RealSecureEnclave, SeKeyMaterial, SecureEnclaveBackend};
 pub use tty::TtyUi;
 pub use ui::{DecryptPurpose, UnlockUi};
 pub use unlock::{
-    unlock_project_identity, unlock_project_identity_verified_with, unlock_project_identity_with,
-    Binding, UnlockContext, UnlockEnv, Unlocked, VerifiedProject,
+    unlock_project_identity, unlock_project_identity_exact_with,
+    unlock_project_identity_verified_with, unlock_project_identity_with, Binding, UnlockContext,
+    UnlockEnv, Unlocked, VerifiedProject,
 };
 
 use std::collections::HashMap;
@@ -124,6 +125,21 @@ pub fn unlock_for_project_verified_with(
     ctx: &UnlockContext,
 ) -> Result<Unlocked, CryptoError> {
     unlock_project_identity_verified_with(
+        project_dir,
+        read_project_public_key(project_dir).as_deref(),
+        purpose,
+        ctx,
+    )
+}
+
+/// [`unlock_for_project_verified_with`] for operations that write or delete key
+/// material: a binding mismatch is refused without any confirmation prompt.
+pub fn unlock_for_project_exact_with(
+    project_dir: &Path,
+    purpose: &DecryptPurpose,
+    ctx: &UnlockContext,
+) -> Result<Unlocked, CryptoError> {
+    unlock_project_identity_exact_with(
         project_dir,
         read_project_public_key(project_dir).as_deref(),
         purpose,

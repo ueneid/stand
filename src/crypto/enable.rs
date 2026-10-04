@@ -77,6 +77,25 @@ pub fn add_touch_id_in(
     public_key: &str,
     project_dir: &Path,
 ) -> Result<(PathBuf, PathBuf), CryptoError> {
+    let plaintext = store::identity_file_contents(identity, project_dir)?;
+    add_touch_id_with_plaintext_in(
+        config_dir,
+        backend,
+        plaintext.expose_secret().as_bytes(),
+        public_key,
+    )
+}
+
+/// Like [`add_touch_id_in`] but wraps the given identity file bytes verbatim.
+///
+/// Used when re-wrapping an existing identity: the original plaintext (with its
+/// recorded `# project:` line) is kept, never regenerated for the current project.
+pub fn add_touch_id_with_plaintext_in(
+    config_dir: &Path,
+    backend: &dyn SecureEnclaveBackend,
+    plaintext: &[u8],
+    public_key: &str,
+) -> Result<(PathBuf, PathBuf), CryptoError> {
     store::validate_public_key(public_key)?;
     let wrapped_path = store::se_wrapped_path_in(config_dir, public_key);
     if wrapped_path.exists() {
@@ -88,8 +107,7 @@ pub fn add_touch_id_in(
     store::ensure_identities_dir_in(config_dir)?;
 
     let material = backend.keygen()?;
-    let plaintext = store::identity_file_contents(identity, project_dir)?;
-    let wrapped = backend.wrap(&material.recipient, plaintext.expose_secret().as_bytes())?;
+    let wrapped = backend.wrap(&material.recipient, plaintext)?;
 
     let identity_path = store::se_identity_path_in(config_dir, public_key);
     store::write_private_file(&identity_path, material.identity_file.as_bytes())?;
