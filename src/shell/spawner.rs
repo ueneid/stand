@@ -4,6 +4,7 @@
 
 use crate::shell::detector::ShellType;
 use crate::shell::prompt::get_prompt_env_vars;
+use crate::shell::reflect::{wrapper_function, ShellKind};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::process::Command;
@@ -57,29 +58,52 @@ pub fn spawn_shell(shell_path: &str, env_vars: HashMap<String, String>) -> Resul
     let shell_type = ShellType::from_path(shell_path);
 
     // Build shell arguments based on shell type
-    let args = get_shell_args(&shell_type);
+    let mut args = get_shell_args(&shell_type);
+
+    // The `stand` wrapper function lets `stand set/unset` update this shell.
+    // It is only installed for bash, zsh and fish; other shells get no wrapper.
+    let wrapper = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.to_str().map(str::to_string))
+        .and_then(|bin| wrapper_for_shell(&shell_type, &bin));
 
     let mut cmd = Command::new(shell_path);
-    cmd.args(&args);
 
     // Add environment variables
     for (key, value) in &env_vars {
         cmd.env(key, value);
     }
 
-    // For zsh, set up ZDOTDIR with custom .zshrc
-    let zdotdir_cleanup = if matches!(shell_type, ShellType::Zsh) {
-        setup_zsh_zdotdir(&mut cmd, &env_vars)?
-    } else {
-        None
-    };
-
-    let status = cmd.status()?;
-
-    // Clean up ZDOTDIR if we created one
-    if let Some(path) = zdotdir_cleanup {
-        let _ = std::fs::remove_dir_all(path);
+    // Temp dirs must stay alive while the shell runs
+    let mut temp_dir: Option<tempfile::TempDir> = None;
+    match shell_type {
+        // For zsh, set up ZDOTDIR with custom .zshrc
+        ShellType::Zsh => {
+            temp_dir = Some(setup_zsh_zdotdir(&mut cmd, &env_vars, wrapper.as_deref())?);
+        }
+        // For bash, use a generated rcfile so the wrapper is defined after ~/.bashrc
+        ShellType::Bash => {
+            if let Some(wrapper) = wrapper.as_deref() {
+                temp_dir = Some(setup_bash_rcfile(&mut args, wrapper)?);
+            }
+        }
+        // For fish, the wrapper is appended to the -C init command
+        ShellType::Fish => {
+            if let Some(wrapper) = wrapper.as_deref() {
+                append_fish_wrapper(&mut args, wrapper);
+            }
+        }
+        ShellType::Other(_) => {}
     }
+
+    cmd.args(&args);
+    let status = cmd.status();
+
+    // Clean up the temp dir (also removed on drop if an error occurs)
+    if let Some(dir) = temp_dir {
+        let _ = dir.close();
+    }
+    let status = status?;
 
     // Return exit code, handling signal termination on Unix
     match status.code() {
@@ -102,16 +126,17 @@ pub fn spawn_shell(shell_path: &str, env_vars: HashMap<String, String>) -> Resul
 /// 1. Sources the user's original .zshrc
 /// 2. Adds our precmd function for prompt customization
 ///
-/// Returns the path to the temp directory for cleanup
+/// Returns the temp directory; it is removed when dropped
 fn setup_zsh_zdotdir(
     cmd: &mut Command,
     env_vars: &HashMap<String, String>,
-) -> Result<Option<std::path::PathBuf>> {
+    wrapper: Option<&str>,
+) -> Result<tempfile::TempDir> {
     use std::io::Write;
 
-    // Create temp directory
-    let temp_dir = std::env::temp_dir().join(format!("stand-zsh-{}", std::process::id()));
-    std::fs::create_dir_all(&temp_dir)?;
+    // Create a private (0700), randomly named temp directory
+    let temp = create_secure_tempdir("stand-zsh-")?;
+    let temp_dir = temp.path().to_path_buf();
 
     // Get color from env vars and validate against allowlist to prevent command injection
     let color = env_vars
@@ -189,7 +214,10 @@ _stand_precmd() {{
 
 # Add to precmd_functions array (runs after any existing precmd)
 precmd_functions+=(_stand_precmd)
-"#
+
+# Stand wrapper so `stand set/unset` update this shell (defined after user's rc)
+{wrapper}"#,
+        wrapper = wrapper.unwrap_or("")
     );
 
     let zshrc_path = temp_dir.join(".zshrc");
@@ -199,7 +227,58 @@ precmd_functions+=(_stand_precmd)
     // Set ZDOTDIR to our temp directory
     cmd.env("ZDOTDIR", &temp_dir);
 
-    Ok(Some(temp_dir))
+    Ok(temp)
+}
+
+/// Create a private temp directory (mode 0700, random name) with the given prefix.
+fn create_secure_tempdir(prefix: &str) -> Result<tempfile::TempDir> {
+    let dir = tempfile::Builder::new().prefix(prefix).tempdir()?;
+    // The default mode follows the umask (often 0755), so restrict it explicitly
+    // before any file is written into the directory.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(dir)
+}
+
+/// Wrapper function text for the given shell, or None for unsupported shells.
+fn wrapper_for_shell(shell_type: &ShellType, stand_bin: &str) -> Option<String> {
+    match shell_type {
+        ShellType::Bash | ShellType::Zsh => Some(wrapper_function(ShellKind::Posix, stand_bin)),
+        ShellType::Fish => Some(wrapper_function(ShellKind::Fish, stand_bin)),
+        ShellType::Other(_) => None,
+    }
+}
+
+/// Set up a generated bash rcfile that sources ~/.bashrc, then defines the wrapper.
+///
+/// Prepends `--rcfile <dir>/bashrc` to the shell arguments and returns the temp
+/// directory, which is removed when dropped.
+fn setup_bash_rcfile(args: &mut Vec<String>, wrapper: &str) -> Result<tempfile::TempDir> {
+    let temp = create_secure_tempdir("stand-bash-")?;
+    let rcfile = temp.path().join("bashrc");
+    let content = format!(
+        r#"# Stand temporary bashrc
+# Source user's original .bashrc if it exists
+[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"
+
+# Stand wrapper so `stand set/unset` update this shell (defined after user's rc)
+{wrapper}"#
+    );
+    std::fs::write(&rcfile, content)?;
+    args.insert(0, "--rcfile".to_string());
+    args.insert(1, rcfile.to_string_lossy().into_owned());
+    Ok(temp)
+}
+
+/// Append the wrapper to fish's `-C` init command (args[1]).
+fn append_fish_wrapper(args: &mut [String], wrapper: &str) {
+    if let Some(init) = args.get_mut(1) {
+        init.push('\n');
+        init.push_str(wrapper);
+    }
 }
 
 /// Get appropriate shell arguments for interactive mode
@@ -332,5 +411,242 @@ mod tests {
     fn test_get_shell_args_other() {
         let args = get_shell_args(&ShellType::Other("sh".to_string()));
         assert_eq!(args, vec!["-i".to_string()]);
+    }
+
+    #[cfg(unix)]
+    fn mode_of(path: &std::path::Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_create_secure_tempdir_is_private_and_removed() {
+        let dir = create_secure_tempdir("stand-test-").unwrap();
+        let path = dir.path().to_path_buf();
+        assert_eq!(mode_of(&path), 0o700);
+        let name = path.file_name().unwrap().to_str().unwrap();
+        assert!(name.starts_with("stand-test-"));
+        assert_ne!(name, format!("stand-test-{}", std::process::id()));
+        dir.close().unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_wrapper_for_shell_supported_and_unsupported() {
+        let b = wrapper_for_shell(&ShellType::Bash, "/x/stand").unwrap();
+        assert!(b.contains("stand()"));
+        let z = wrapper_for_shell(&ShellType::Zsh, "/x/stand").unwrap();
+        assert!(z.contains("stand()"));
+        let f = wrapper_for_shell(&ShellType::Fish, "/x/stand").unwrap();
+        assert!(f.contains("function stand"));
+        assert!(wrapper_for_shell(&ShellType::Other("sh".into()), "/x/stand").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_setup_bash_rcfile_creates_private_rcfile_with_wrapper() {
+        let mut args = vec!["-i".to_string()];
+        let dir = setup_bash_rcfile(&mut args, "stand() { :; }\n").unwrap();
+        assert_eq!(mode_of(dir.path()), 0o700);
+        let dir_name = dir.path().file_name().unwrap().to_str().unwrap();
+        assert!(dir_name.starts_with("stand-bash-"));
+        let rc = dir.path().join("bashrc");
+        assert_eq!(args[0], "--rcfile");
+        assert_eq!(args[1], rc.to_string_lossy());
+        assert_eq!(args[2], "-i");
+        let content = std::fs::read_to_string(&rc).unwrap();
+        let bashrc_pos = content.find("$HOME/.bashrc").unwrap();
+        let wrapper_pos = content.find("stand() { :; }").unwrap();
+        assert!(
+            bashrc_pos < wrapper_pos,
+            "wrapper must follow user's bashrc"
+        );
+        let path = dir.path().to_path_buf();
+        dir.close().unwrap();
+        assert!(!path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_setup_zsh_zdotdir_private_and_wrapper_after_user_zshrc() {
+        let mut cmd = Command::new("zsh");
+        let dir = setup_zsh_zdotdir(&mut cmd, &HashMap::new(), Some("stand() { :; }\n")).unwrap();
+        assert_eq!(mode_of(dir.path()), 0o700);
+        let dir_name = dir.path().file_name().unwrap().to_str().unwrap();
+        assert!(dir_name.starts_with("stand-zsh-"));
+        let content = std::fs::read_to_string(dir.path().join(".zshrc")).unwrap();
+        let user_pos = content.find("source \"$HOME/.zshrc\"").unwrap();
+        let wrapper_pos = content.find("stand() { :; }").unwrap();
+        assert!(user_pos < wrapper_pos);
+        let path = dir.path().to_path_buf();
+        dir.close().unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_setup_zsh_zdotdir_without_wrapper_has_no_wrapper() {
+        let mut cmd = Command::new("zsh");
+        let dir = setup_zsh_zdotdir(&mut cmd, &HashMap::new(), None).unwrap();
+        let content = std::fs::read_to_string(dir.path().join(".zshrc")).unwrap();
+        assert!(!content.contains("stand() {"));
+    }
+
+    #[test]
+    fn test_append_fish_wrapper_extends_init_command() {
+        let mut args = get_shell_args(&ShellType::Fish);
+        append_fish_wrapper(&mut args, "function stand\nend\n");
+        assert_eq!(args[0], "-C");
+        assert!(args[1].contains("function fish_prompt"));
+        assert!(args[1].ends_with("function stand\nend\n"));
+    }
+
+    /// Run `shell` with `args`/`envs`, feed `script` on stdin, return stdout.
+    #[cfg(unix)]
+    fn run_with_stdin(
+        shell: &std::path::Path,
+        args: &[String],
+        envs: &[(&str, &std::path::Path)],
+        script: &str,
+    ) -> String {
+        use std::io::Write;
+        use std::process::Stdio;
+        let mut cmd = Command::new(shell);
+        cmd.args(args);
+        for (k, v) in envs {
+            cmd.env(k, v);
+        }
+        let mut child = cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(script.as_bytes())
+            .unwrap();
+        String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned()
+    }
+
+    #[cfg(unix)]
+    fn fake_stand(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let fake = dir.join("fake stand");
+        std::fs::write(&fake, body).unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        fake
+    }
+
+    /// Fish: wrapper appended to the -C init command works in a real fish.
+    #[cfg(unix)]
+    #[test]
+    fn test_fish_init_command_defines_working_wrapper() {
+        let Some(fish) = [
+            "/opt/homebrew/bin/fish",
+            "/usr/bin/fish",
+            "/usr/local/bin/fish",
+        ]
+        .iter()
+        .map(std::path::Path::new)
+        .find(|p| p.is_file()) else {
+            return;
+        };
+        let home = tempfile::tempdir().unwrap();
+        let fake = fake_stand(
+            home.path(),
+            "#!/bin/sh\n[ \"$STAND_SHELL_FD\" = 3 ] && echo \"set -gx KEY 'v2'\" >&3\n",
+        );
+        let wrapper = wrapper_function(ShellKind::Fish, fake.to_str().unwrap());
+        let mut args = vec!["--no-config".to_string()];
+        args.extend(get_shell_args(&ShellType::Fish));
+        append_fish_wrapper(&mut args[1..], &wrapper);
+        let out = run_with_stdin(
+            fish,
+            &args,
+            &[("HOME", home.path())],
+            "stand set dev KEY\necho R:$KEY\nexit\n",
+        );
+        assert!(out.contains("R:v2"), "got: {out}");
+    }
+
+    /// Zsh: generated ZDOTDIR defines the wrapper after the user's .zshrc.
+    #[cfg(unix)]
+    #[test]
+    fn test_zsh_zdotdir_defines_working_wrapper_after_user_zshrc() {
+        let Some(zsh) = ["/bin/zsh", "/usr/bin/zsh", "/opt/homebrew/bin/zsh"]
+            .iter()
+            .map(std::path::Path::new)
+            .find(|p| p.is_file())
+        else {
+            return;
+        };
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join(".zshrc"), "USER_RC_LOADED=yes\n").unwrap();
+        let fake = fake_stand(
+            home.path(),
+            "#!/bin/sh\n[ \"$STAND_SHELL_FD\" = 3 ] && echo \"export KEY='v3'\" >&3\n",
+        );
+        let wrapper = wrapper_function(ShellKind::Posix, fake.to_str().unwrap());
+        let mut cmd = Command::new(zsh);
+        let dir = setup_zsh_zdotdir(&mut cmd, &HashMap::new(), Some(&wrapper)).unwrap();
+        let out = run_with_stdin(
+            zsh,
+            &["-i".to_string()],
+            &[("HOME", home.path()), ("ZDOTDIR", dir.path())],
+            "stand set dev KEY\necho \"R:$USER_RC_LOADED:$KEY\"\nexit\n",
+        );
+        assert!(out.contains("R:yes:v3"), "got: {out}");
+        dir.close().unwrap();
+    }
+
+    /// Run a generated bash rcfile in a real interactive bash and call the wrapper.
+    #[cfg(unix)]
+    #[test]
+    fn test_bash_rcfile_defines_working_wrapper_after_user_bashrc() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Stdio;
+
+        let Some(bash) = ["/bin/bash", "/usr/bin/bash"]
+            .iter()
+            .find(|p| std::path::Path::new(p).is_file())
+        else {
+            return;
+        };
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join(".bashrc"), "USER_RC_LOADED=yes\n").unwrap();
+        let fake = home.path().join("fake stand");
+        std::fs::write(
+            &fake,
+            "#!/bin/sh\n[ \"$STAND_SHELL_FD\" = 3 ] && echo \"export KEY='v1'\" >&3\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let wrapper = wrapper_function(ShellKind::Posix, fake.to_str().unwrap());
+        let mut args = vec!["-i".to_string()];
+        let dir = setup_bash_rcfile(&mut args, &wrapper).unwrap();
+
+        let mut child = Command::new(bash)
+            .args(&args)
+            .env("HOME", home.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"stand set dev KEY\necho \"R:$USER_RC_LOADED:$KEY\"\nexit\n")
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("R:yes:v1"), "got: {stdout}");
+        dir.close().unwrap();
     }
 }
