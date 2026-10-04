@@ -11,30 +11,77 @@ use age::secrecy::SecretString;
 /// Maximum number of characters of one interpolated field.
 pub(crate) const MAX_FIELD_CHARS: usize = 200;
 
+/// Unicode format (Cf) and line/paragraph separator ranges that can be used to
+/// spoof terminal output (bidi overrides, zero-width characters, ...).
+const INVISIBLE_RANGES: &[(u32, u32)] = &[
+    (0x00AD, 0x00AD),
+    (0x0600, 0x0605),
+    (0x061C, 0x061C),
+    (0x06DD, 0x06DD),
+    (0x070F, 0x070F),
+    (0x0890, 0x0891),
+    (0x08E2, 0x08E2),
+    (0x180E, 0x180E),
+    (0x200B, 0x200F),
+    (0x2028, 0x202E),
+    (0x2060, 0x2064),
+    (0x2066, 0x206F),
+    (0xFEFF, 0xFEFF),
+    (0xFFF9, 0xFFFB),
+    (0x110BD, 0x110BD),
+    (0x110CD, 0x110CD),
+    (0x13430, 0x1343F),
+    (0x1BCA0, 0x1BCA3),
+    (0x1D173, 0x1D17A),
+    (0xE0001, 0xE0001),
+    (0xE0020, 0xE007F),
+];
+
+fn is_invisible_format_char(c: char) -> bool {
+    let cp = c as u32;
+    INVISIBLE_RANGES
+        .iter()
+        .any(|&(lo, hi)| (lo..=hi).contains(&cp))
+}
+
+fn escape_char(c: char, out: &mut String) {
+    match c {
+        '\n' => out.push_str("\\n"),
+        '\r' => out.push_str("\\r"),
+        '\t' => out.push_str("\\t"),
+        c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+        c if is_invisible_format_char(c) => out.push_str(&format!("\\u{{{:04x}}}", c as u32)),
+        c => out.push(c),
+    }
+}
+
 /// Makes `input` safe to print on a terminal.
 ///
-/// Control characters (C0, DEL, C1, ESC) are replaced by visible escapes and the
-/// result is truncated to [`MAX_FIELD_CHARS`] characters plus an ellipsis.
+/// Control characters (C0, DEL, C1, ESC) and invisible/bidi Unicode format
+/// characters are replaced by visible escapes. Fields longer than
+/// [`MAX_FIELD_CHARS`] keep their head and tail with the middle summarized, so
+/// neither end can hide content.
 pub fn sanitize_for_terminal(input: &str) -> String {
     sanitize_with_limit(input, MAX_FIELD_CHARS)
 }
 
 /// [`sanitize_for_terminal`] with an explicit character limit.
 pub(crate) fn sanitize_with_limit(input: &str, limit: usize) -> String {
+    let chars: Vec<char> = input.chars().collect();
     let mut out = String::new();
-    for (count, c) in input.chars().enumerate() {
-        if count >= limit {
-            out.push('\u{2026}');
-            break;
-        }
-        match c {
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
-            c => out.push(c),
-        }
+    if chars.len() <= limit {
+        chars.iter().for_each(|&c| escape_char(c, &mut out));
+        return out;
     }
+    let keep = limit * 2 / 5;
+    chars[..keep].iter().for_each(|&c| escape_char(c, &mut out));
+    out.push_str(&format!(
+        "\u{2026}({} chars omitted)\u{2026}",
+        chars.len() - 2 * keep
+    ));
+    chars[chars.len() - keep..]
+        .iter()
+        .for_each(|&c| escape_char(c, &mut out));
     out
 }
 
@@ -125,11 +172,61 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitize_truncates_long_strings_with_ellipsis() {
+    fn test_sanitize_truncates_long_strings_keeping_head_and_tail() {
         let s = sanitize_for_terminal(&"x".repeat(500));
-        assert_eq!(s.chars().count(), MAX_FIELD_CHARS + 1);
-        assert!(s.ends_with('\u{2026}'));
+        assert!(s.contains("\u{2026}(340 chars omitted)\u{2026}"), "{s}");
+        assert_eq!(s.chars().filter(|c| *c == 'x').count(), 160);
+        assert!(s.starts_with(&"x".repeat(80)));
+        assert!(s.ends_with(&"x".repeat(80)));
         assert_eq!(sanitize_for_terminal("short"), "short");
+        let exact = "y".repeat(MAX_FIELD_CHARS);
+        assert_eq!(sanitize_for_terminal(&exact), exact);
+    }
+
+    #[test]
+    fn test_sanitize_long_command_still_shows_tail() {
+        let cmd = format!("{}; curl evil.example", "a".repeat(481));
+        assert_eq!(cmd.chars().count(), 500);
+        let s = sanitize_for_terminal(&cmd);
+        assert!(s.contains("curl evil.example"), "{s}");
+        let p = DecryptPurpose::new(cmd, None);
+        assert!(p.banner().contains("curl evil.example"));
+    }
+
+    #[test]
+    fn test_sanitize_escapes_bidi_and_invisible_format_chars() {
+        let s = sanitize_for_terminal("a\u{202E}b\u{200B}c\u{2066}d\u{FEFF}e\u{00AD}f\u{2028}g");
+        assert_eq!(
+            s,
+            "a\\u{202e}b\\u{200b}c\\u{2066}d\\u{feff}e\\u{00ad}f\\u{2028}g"
+        );
+        for c in [
+            '\u{202A}',
+            '\u{202D}',
+            '\u{2069}',
+            '\u{200E}',
+            '\u{200F}',
+            '\u{200D}',
+            '\u{2060}',
+            '\u{2029}',
+            '\u{E0001}',
+            '\u{E0041}',
+            '\u{0600}',
+            '\u{180E}',
+        ] {
+            let out = sanitize_for_terminal(&format!("x{c}y"));
+            assert!(out.contains("\\u{"), "{:x}", c as u32);
+            assert!(!out.contains(c));
+        }
+    }
+
+    #[test]
+    fn test_banner_escapes_spoofing_chars_in_all_fields() {
+        let mut p = DecryptPurpose::new("ls\u{202E}gnp", Some("de\u{200B}v"));
+        p.secret_count = 1;
+        let b = p.banner();
+        assert!(!b.contains('\u{202E}') && !b.contains('\u{200B}'));
+        assert!(b.contains("\\u{202e}") && b.contains("\\u{200b}"));
     }
 
     #[test]
