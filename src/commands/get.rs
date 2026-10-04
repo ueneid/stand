@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use crate::config::{loader, ConfigError};
-use crate::crypto::{decrypt_value, is_encrypted, load_private_key_for_decryption, CryptoError};
+use crate::crypto::{decrypt_single_value, is_encrypted, CryptoError, DecryptPurpose};
 
 /// Get a variable value from the configuration.
 ///
@@ -33,10 +33,11 @@ pub fn get_variable(
 
     // Decrypt if encrypted
     if is_encrypted(value) {
-        let private_key = load_private_key_for_decryption(project_dir)?;
-        let identity = crate::crypto::keys::parse_private_key(&private_key)?;
-        let decrypted = decrypt_value(value, &identity)?;
-        Ok(decrypted)
+        let purpose = DecryptPurpose::new(
+            format!("stand get {} {}", environment, key),
+            Some(environment),
+        );
+        Ok(decrypt_single_value(value, project_dir, &purpose)?)
     } else {
         Ok(value.clone())
     }

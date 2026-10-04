@@ -8,7 +8,7 @@ use colored::Colorize;
 use toml_edit::{DocumentMut, Item, Value};
 
 use crate::crypto::{
-    generate_key_pair, load_private_key_for_decryption, CryptoError, ENCRYPTED_PREFIX,
+    generate_key_pair, unlock_for_project, CryptoError, DecryptPurpose, ENCRYPTED_PREFIX,
 };
 
 const KEYS_FILE: &str = ".stand.keys";
@@ -170,9 +170,10 @@ pub fn disable_encryption_internal(
 
     // Only load private key if there are encrypted values to decrypt
     if has_encrypted_values {
-        let private_key = load_private_key_for_decryption(project_dir)?;
-        let identity = crate::crypto::keys::parse_private_key(&private_key)
-            .map_err(EncryptionCommandError::Crypto)?;
+        let purpose = DecryptPurpose::new("stand encrypt disable", None);
+        let mut purpose = purpose;
+        purpose.secret_count = count_encrypted_values_in_doc(&doc);
+        let identity = unlock_for_project(project_dir, &purpose)?;
 
         // Decrypt all encrypted values in environments section
         if let Some(environments) = doc.get_mut("environments") {
@@ -266,6 +267,28 @@ fn has_encrypted_values_in_doc(doc: &DocumentMut) -> bool {
     }
 
     false
+}
+
+/// Counts encrypted values in [environments.*] and [common].
+fn count_encrypted_values_in_doc(doc: &DocumentMut) -> usize {
+    let count_in = |table: &toml_edit::Table| {
+        table
+            .iter()
+            .filter(|(_, v)| v.as_str().is_some_and(|s| s.starts_with(ENCRYPTED_PREFIX)))
+            .count()
+    };
+    let mut total = 0;
+    if let Some(env_table) = doc.get("environments").and_then(|e| e.as_table()) {
+        for (_, env_config) in env_table.iter() {
+            if let Some(t) = env_config.as_table() {
+                total += count_in(t);
+            }
+        }
+    }
+    if let Some(t) = doc.get("common").and_then(|c| c.as_table()) {
+        total += count_in(t);
+    }
+    total
 }
 
 /// Adds a file to .gitignore if not already present.

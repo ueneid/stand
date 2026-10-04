@@ -1,5 +1,5 @@
 use crate::config::loader;
-use crate::crypto::decrypt_variables;
+use crate::crypto::{decrypt_variables, DecryptPurpose};
 use crate::shell::{get_active_environment, is_stand_shell_active};
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
@@ -56,7 +56,8 @@ fn get_user_variables(project_path: &Path, env_name: &str) -> Result<HashMap<Str
         .ok_or_else(|| anyhow!("Environment '{}' not found in configuration", env_name))?;
 
     // Decrypt any encrypted values
-    let decrypted = decrypt_variables(env.variables.clone(), project_path)
+    let purpose = DecryptPurpose::new(format!("stand env {}", env_name), Some(env_name));
+    let decrypted = decrypt_variables(env.variables.clone(), project_path, &purpose)
         .map_err(|e| anyhow!("Failed to decrypt variables: {}", e))?;
 
     Ok(decrypted)

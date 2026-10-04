@@ -1,13 +1,27 @@
 //! Encryption module for Stand.
 //!
 //! This module provides encryption and decryption functionality using the age library.
-//! It supports X25519 key pairs for asymmetric encryption.
+//! It supports X25519 key pairs for asymmetric encryption. Values stay encrypted to the
+//! project X25519 key; the private key itself is stored wrapped (passphrase and optionally
+//! Touch ID) and every decryption goes through the unlock gate in [`unlock`].
 
 mod age_crypto;
+pub mod enable;
 pub mod keys;
+pub mod store;
+#[cfg(test)]
+pub(crate) mod testing;
+pub mod touch_id;
+pub mod tty;
+pub mod ui;
+pub mod unlock;
 
 pub use age_crypto::{decrypt_value, encrypt_value, is_encrypted};
 pub use keys::{generate_key_pair, KeyPair};
+pub use touch_id::{RealSecureEnclave, SeKeyMaterial, SecureEnclaveBackend};
+pub use tty::TtyUi;
+pub use ui::{DecryptPurpose, UnlockUi};
+pub use unlock::{unlock_project_identity, unlock_project_identity_with, UnlockContext, UnlockEnv};
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -40,8 +54,26 @@ pub enum CryptoError {
     #[error("No encryption key configured")]
     NoEncryptionKey,
 
-    #[error("No private key available for decryption")]
-    NoPrivateKey,
+    #[error("No private key available for decryption: {hint}")]
+    NoPrivateKey { hint: String },
+
+    #[error("STAND_PRIVATE_KEY is only used when CI=true or STAND_KEY_SOURCE=env. Never export it in your interactive shell profile.")]
+    EnvKeyNotAllowed,
+
+    #[error("Decryption requires an interactive terminal (could not open /dev/tty); refusing to decrypt. In CI, set CI=true and STAND_PRIVATE_KEY.")]
+    NoTerminal,
+
+    #[error("The unlocked identity does not match the project public key {expected}")]
+    IdentityMismatch { expected: String },
+
+    #[error("Unlock failed: {0}")]
+    UnlockFailed(String),
+
+    #[error("Secure Enclave unavailable: {0}")]
+    SecureEnclaveUnavailable(String),
+
+    #[error("Identity store error: {0}")]
+    StoreError(String),
 
     #[error("Base64 decode error: {0}")]
     Base64Error(#[from] base64::DecodeError),
@@ -50,34 +82,72 @@ pub enum CryptoError {
     IoError(#[from] std::io::Error),
 }
 
+/// Reads `[encryption].public_key` from the project's `.stand.toml`, if present.
+pub fn read_project_public_key(project_dir: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(project_dir.join(".stand.toml")).ok()?;
+    let doc: toml::Table = content.parse().ok()?;
+    doc.get("encryption")?
+        .get("public_key")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// Unlocks the project identity (reading the public key from `.stand.toml`).
+pub fn unlock_for_project(
+    project_dir: &Path,
+    purpose: &DecryptPurpose,
+) -> Result<age::x25519::Identity, CryptoError> {
+    let ctx = UnlockContext::production()?;
+    unlock_for_project_with(project_dir, purpose, &ctx)
+}
+
+/// [`unlock_for_project`] with an injected [`UnlockContext`].
+pub fn unlock_for_project_with(
+    project_dir: &Path,
+    purpose: &DecryptPurpose,
+    ctx: &UnlockContext,
+) -> Result<age::x25519::Identity, CryptoError> {
+    unlock_project_identity_with(
+        project_dir,
+        read_project_public_key(project_dir).as_deref(),
+        purpose,
+        ctx,
+    )
+}
+
 /// Decrypts all encrypted values in a HashMap.
 ///
-/// This function checks each value in the HashMap, and if it's encrypted (starts with "encrypted:"),
-/// it will be decrypted using the provided private key.
-///
-/// # Arguments
-/// * `variables` - The HashMap of variable names to values
-/// * `project_dir` - The project directory (used to locate .stand.keys file)
-///
-/// # Returns
-/// A new HashMap with all encrypted values decrypted.
-/// If no encrypted values are found, returns the original HashMap unchanged.
-/// If encrypted values are found but no private key is available, returns an error.
+/// If no value is encrypted the map is returned unchanged and nothing is
+/// unlocked. Otherwise the project identity is unlocked once through the
+/// unlock gate (see [`unlock`]), with `purpose.secret_count` set to the number
+/// of encrypted values.
 pub fn decrypt_variables(
     variables: HashMap<String, String>,
     project_dir: &Path,
+    purpose: &DecryptPurpose,
 ) -> Result<HashMap<String, String>, CryptoError> {
-    // Check if any values are encrypted
-    let has_encrypted = variables.values().any(|v| is_encrypted(v));
-    if !has_encrypted {
+    if !variables.values().any(|v| is_encrypted(v)) {
         return Ok(variables);
     }
+    let ctx = UnlockContext::production()?;
+    decrypt_variables_with(variables, project_dir, purpose, &ctx)
+}
 
-    // Load private key
-    let private_key = load_private_key_for_decryption(project_dir)?;
-    let identity = keys::parse_private_key(&private_key)?;
+/// [`decrypt_variables`] with an injected [`UnlockContext`].
+pub fn decrypt_variables_with(
+    variables: HashMap<String, String>,
+    project_dir: &Path,
+    purpose: &DecryptPurpose,
+    ctx: &UnlockContext,
+) -> Result<HashMap<String, String>, CryptoError> {
+    let count = variables.values().filter(|v| is_encrypted(v)).count();
+    if count == 0 {
+        return Ok(variables);
+    }
+    let mut purpose = purpose.clone();
+    purpose.secret_count = count;
+    let identity = unlock_for_project_with(project_dir, &purpose, ctx)?;
 
-    // Decrypt all encrypted values
     let mut result = HashMap::new();
     for (key, value) in variables {
         if is_encrypted(&value) {
@@ -92,32 +162,85 @@ pub fn decrypt_variables(
             result.insert(key, value);
         }
     }
-
     Ok(result)
 }
 
-/// Load private key from environment variable or .stand.keys file.
+/// Decrypts a single value (e.g. an inherited value for `stand unset`).
 ///
-/// Tries `STAND_PRIVATE_KEY` environment variable first, then falls back
-/// to reading from the `.stand.keys` file in the project directory.
-pub fn load_private_key_for_decryption(project_dir: &Path) -> Result<String, CryptoError> {
-    // First try environment variable (may error on invalid UTF-8)
-    match keys::load_private_key_from_env() {
-        Ok(Some(key)) => return Ok(key),
-        Ok(None) => {} // Not set, try file
-        Err(e) => return Err(e),
+/// Plain (non-encrypted) values are returned as is without unlocking.
+/// `purpose.secret_count` is set to 1.
+pub fn decrypt_single_value(
+    value: &str,
+    project_dir: &Path,
+    purpose: &DecryptPurpose,
+) -> Result<String, CryptoError> {
+    if !is_encrypted(value) {
+        return Ok(value.to_string());
     }
+    let ctx = UnlockContext::production()?;
+    decrypt_single_value_with(value, project_dir, purpose, &ctx)
+}
 
-    // Then try .stand.keys file
-    let keys_path = project_dir.join(".stand.keys");
-    keys::load_private_key(&keys_path)
+/// [`decrypt_single_value`] with an injected [`UnlockContext`].
+pub fn decrypt_single_value_with(
+    value: &str,
+    project_dir: &Path,
+    purpose: &DecryptPurpose,
+    ctx: &UnlockContext,
+) -> Result<String, CryptoError> {
+    if !is_encrypted(value) {
+        return Ok(value.to_string());
+    }
+    let mut purpose = purpose.clone();
+    purpose.secret_count = 1;
+    let identity = unlock_for_project_with(project_dir, &purpose, ctx)?;
+    decrypt_value(value, &identity)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::testing::{MockSe, MockUi};
+    use age::secrecy::{ExposeSecret, SecretString};
+    use serial_test::serial;
+    use std::ffi::OsString;
     use std::fs;
+    use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
+
+    /// Sets/clears process env vars and restores them on drop.
+    struct EnvGuard(Vec<(&'static str, Option<OsString>)>);
+
+    impl EnvGuard {
+        fn set(vars: &[(&'static str, Option<&str>)]) -> Self {
+            let saved = vars
+                .iter()
+                .map(|(k, _)| (*k, std::env::var_os(k)))
+                .collect();
+            for (k, v) in vars {
+                match v {
+                    Some(v) => std::env::set_var(k, v),
+                    None => std::env::remove_var(k),
+                }
+            }
+            EnvGuard(saved)
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (k, v) in self.0.drain(..) {
+                match v {
+                    Some(v) => std::env::set_var(k, v),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+    }
+
+    fn purpose() -> DecryptPurpose {
+        DecryptPurpose::new("stand exec dev -- true", Some("dev"))
+    }
 
     #[test]
     fn test_encrypted_prefix_constant() {
@@ -140,14 +263,21 @@ mod tests {
         variables.insert("KEY1".to_string(), "value1".to_string());
         variables.insert("KEY2".to_string(), "value2".to_string());
 
-        // Should return the same values when nothing is encrypted
-        let result = decrypt_variables(variables.clone(), dir.path());
+        // Should return the same values when nothing is encrypted (and never unlock)
+        let result = decrypt_variables(variables.clone(), dir.path(), &purpose());
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), variables);
     }
 
     #[test]
-    fn test_decrypt_variables_with_encrypted_values() {
+    #[serial]
+    fn test_decrypt_variables_with_legacy_keys_file() {
+        let _env = EnvGuard::set(&[
+            ("STAND_PRIVATE_KEY", None),
+            ("STAND_FORCE_NON_TTY", Some("1")),
+        ]);
+        let cfg = tempdir().unwrap();
+        let _xdg = EnvGuard::set(&[("XDG_CONFIG_HOME", cfg.path().to_str())]);
         let dir = tempdir().unwrap();
 
         // Generate keys and save private key
@@ -163,11 +293,8 @@ mod tests {
         variables.insert("PLAIN_KEY".to_string(), "plain-value".to_string());
         variables.insert("SECRET_KEY".to_string(), encrypted);
 
-        // Should decrypt the encrypted value
-        let result = decrypt_variables(variables, dir.path());
-        assert!(result.is_ok());
-
-        let decrypted = result.unwrap();
+        // Legacy .stand.keys needs no terminal
+        let decrypted = decrypt_variables(variables, dir.path(), &purpose()).unwrap();
         assert_eq!(decrypted.get("PLAIN_KEY"), Some(&"plain-value".to_string()));
         assert_eq!(
             decrypted.get("SECRET_KEY"),
@@ -176,7 +303,12 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_decrypt_variables_fails_without_private_key() {
+        let _env = EnvGuard::set(&[
+            ("STAND_PRIVATE_KEY", None),
+            ("STAND_FORCE_NON_TTY", Some("1")),
+        ]);
         let dir = tempdir().unwrap();
 
         // Create a config file without keys
@@ -186,7 +318,192 @@ mod tests {
         variables.insert("SECRET".to_string(), "encrypted:somedata".to_string());
 
         // Should fail because no private key is available
-        let result = decrypt_variables(variables, dir.path());
-        assert!(result.is_err());
+        let result = decrypt_variables(variables, dir.path(), &purpose());
+        assert!(matches!(result, Err(CryptoError::NoEncryptionKey)));
+    }
+
+    #[test]
+    #[serial]
+    fn test_force_non_tty_with_identity_file_reports_no_terminal() {
+        let cfg = tempdir().unwrap();
+        let dir = tempdir().unwrap();
+        let _env = EnvGuard::set(&[
+            ("XDG_CONFIG_HOME", cfg.path().to_str()),
+            ("STAND_FORCE_NON_TTY", Some("1")),
+            ("STAND_PRIVATE_KEY", None),
+            ("CI", None),
+            ("STAND_KEY_SOURCE", None),
+        ]);
+
+        let identity = age::x25519::Identity::generate();
+        let public_key = identity.to_public().to_string();
+        store::write_passphrase_identity(
+            &public_key,
+            &identity,
+            &SecretString::from("pw".to_string()),
+            Some(8),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".stand.toml"),
+            format!("[encryption]\npublic_key = \"{}\"\n", public_key),
+        )
+        .unwrap();
+        let encrypted = encrypt_value("v", &identity.to_public()).unwrap();
+
+        let mut variables = HashMap::new();
+        variables.insert("S".to_string(), encrypted);
+        let err = decrypt_variables(variables, dir.path(), &purpose()).unwrap_err();
+        assert!(matches!(err, CryptoError::NoTerminal));
+        assert!(err.to_string().contains("interactive terminal"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_ci_env_key_decrypts_without_tty() {
+        let identity = age::x25519::Identity::generate();
+        let key = identity.to_string().expose_secret().to_string();
+        let cfg = tempdir().unwrap();
+        let dir = tempdir().unwrap();
+        let _env = EnvGuard::set(&[
+            ("XDG_CONFIG_HOME", cfg.path().to_str()),
+            ("STAND_FORCE_NON_TTY", Some("1")),
+            ("CI", Some("true")),
+            ("STAND_KEY_SOURCE", None),
+            ("STAND_PRIVATE_KEY", Some(&key)),
+        ]);
+        let encrypted = encrypt_value("ci-secret", &identity.to_public()).unwrap();
+        let mut variables = HashMap::new();
+        variables.insert("S".to_string(), encrypted);
+
+        let out = decrypt_variables(variables, dir.path(), &purpose()).unwrap();
+        assert_eq!(out.get("S"), Some(&"ci-secret".to_string()));
+    }
+
+    #[test]
+    #[serial]
+    fn test_env_key_without_opt_in_is_rejected() {
+        let identity = age::x25519::Identity::generate();
+        let key = identity.to_string().expose_secret().to_string();
+        let cfg = tempdir().unwrap();
+        let dir = tempdir().unwrap();
+        let _env = EnvGuard::set(&[
+            ("XDG_CONFIG_HOME", cfg.path().to_str()),
+            ("CI", None),
+            ("STAND_KEY_SOURCE", None),
+            ("STAND_PRIVATE_KEY", Some(&key)),
+        ]);
+        let encrypted = encrypt_value("x", &identity.to_public()).unwrap();
+        let mut variables = HashMap::new();
+        variables.insert("S".to_string(), encrypted);
+
+        let err = decrypt_variables(variables, dir.path(), &purpose()).unwrap_err();
+        assert!(matches!(err, CryptoError::EnvKeyNotAllowed));
+        assert!(err.to_string().contains("CI=true"));
+    }
+
+    #[test]
+    fn test_decrypt_variables_with_sets_secret_count_in_banner() {
+        let cfg = tempdir().unwrap();
+        let project = tempdir().unwrap();
+        let identity = age::x25519::Identity::generate();
+        let public_key = identity.to_public().to_string();
+        store::write_passphrase_identity_in(
+            cfg.path(),
+            &public_key,
+            &identity,
+            &SecretString::from("pw".to_string()),
+            Some(8),
+        )
+        .unwrap();
+        fs::write(
+            project.path().join(".stand.toml"),
+            format!("[encryption]\npublic_key = \"{}\"\n", public_key),
+        )
+        .unwrap();
+
+        let ui = MockUi::new(vec![Some("pw")]);
+        let ctx = UnlockContext {
+            env: UnlockEnv {
+                ci: None,
+                key_source: None,
+                private_key: None,
+                unlock_mode: None,
+                force_non_tty: false,
+                config_dir: cfg.path().to_path_buf(),
+                max_work_factor: Some(8),
+            },
+            ui: Some(ui.clone() as Arc<dyn UnlockUi>),
+            secure_enclave: Box::new(MockSe::new(false, false)),
+            warn: Arc::new(|_| {}),
+        };
+        let mut variables = HashMap::new();
+        variables.insert(
+            "A".to_string(),
+            encrypt_value("1", &identity.to_public()).unwrap(),
+        );
+        variables.insert(
+            "B".to_string(),
+            encrypt_value("2", &identity.to_public()).unwrap(),
+        );
+        variables.insert("C".to_string(), "plain".to_string());
+
+        let out = decrypt_variables_with(variables, project.path(), &purpose(), &ctx).unwrap();
+        assert_eq!(out["A"], "1");
+        assert_eq!(out["B"], "2");
+        assert_eq!(out["C"], "plain");
+        assert_eq!(ui.prompt_count(), 1, "one unlock for all secrets");
+        assert!(ui.shown_messages()[0].contains("2 secret(s)"));
+    }
+
+    #[test]
+    fn test_decrypt_single_value_with_unlocks_once_and_passes_plain_through() {
+        let cfg = tempdir().unwrap();
+        let project = tempdir().unwrap();
+        let identity = age::x25519::Identity::generate();
+        let public_key = identity.to_public().to_string();
+        store::write_passphrase_identity_in(
+            cfg.path(),
+            &public_key,
+            &identity,
+            &SecretString::from("pw".to_string()),
+            Some(8),
+        )
+        .unwrap();
+        fs::write(
+            project.path().join(".stand.toml"),
+            format!("[encryption]\npublic_key = \"{}\"\n", public_key),
+        )
+        .unwrap();
+        let ui = MockUi::new(vec![Some("pw")]);
+        let warnings = Arc::new(Mutex::new(vec![]));
+        let w = warnings.clone();
+        let ctx = UnlockContext {
+            env: UnlockEnv {
+                ci: None,
+                key_source: None,
+                private_key: None,
+                unlock_mode: None,
+                force_non_tty: false,
+                config_dir: cfg.path().to_path_buf(),
+                max_work_factor: Some(8),
+            },
+            ui: Some(ui.clone() as Arc<dyn UnlockUi>),
+            secure_enclave: Box::new(MockSe::new(false, false)),
+            warn: Arc::new(move |m| w.lock().unwrap().push(m.to_string())),
+        };
+        let enc = encrypt_value("hello", &identity.to_public()).unwrap();
+        assert_eq!(
+            decrypt_single_value_with("plain", project.path(), &purpose(), &ctx).unwrap(),
+            "plain"
+        );
+        assert_eq!(ui.prompt_count(), 0);
+        assert_eq!(
+            decrypt_single_value_with(&enc, project.path(), &purpose(), &ctx).unwrap(),
+            "hello"
+        );
+        assert_eq!(ui.prompt_count(), 1);
+        assert!(ui.shown_messages()[0].contains("1 secret(s)"));
+        assert!(warnings.lock().unwrap().is_empty());
     }
 }

@@ -121,7 +121,9 @@ pub fn load_private_key(path: &Path) -> Result<String, CryptoError> {
         }
     }
 
-    Err(CryptoError::NoPrivateKey)
+    Err(CryptoError::NoPrivateKey {
+        hint: format!("{} has no STAND_PRIVATE_KEY line", path.display()),
+    })
 }
 
 /// Loads the private key from an environment variable.
