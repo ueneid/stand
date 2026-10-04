@@ -132,9 +132,11 @@ pub fn migrate_encryption_with(
     store::validate_public_key(&public_key)?;
 
     let keys_path = project_dir.join(KEYS_FILE);
-    if !keys_path.exists() {
+    if keys_path.symlink_metadata().is_err() {
         return Err(EncryptionCommandError::KeysFileNotFound);
     }
+    // Refuse before anything is written: the file is zero-overwritten at the end.
+    store::check_plain_single_link_file(&keys_path)?;
     let legacy = keys::parse_private_key(&keys::load_private_key(&keys_path)?)?;
     if legacy.to_public().to_string() != public_key {
         return Err(EncryptionCommandError::PublicKeyMismatch {
@@ -173,7 +175,14 @@ pub fn migrate_encryption_with(
         san_path(&identity_path)
     );
 
-    store::wipe_and_delete(&keys_path)?;
+    store::wipe_and_delete(&keys_path).map_err(|e| {
+        CryptoError::StoreError(format!(
+            "the wrapped key was saved to {} but {} could not be removed: {}",
+            san_path(&identity_path),
+            KEYS_FILE,
+            san(&e.to_string())
+        ))
+    })?;
     println!("{} Removed {}", "✓".green(), KEYS_FILE);
     println!("Hint: run `stand encrypt add-touch-id` to unlock with Touch ID.");
     Ok(())
@@ -362,8 +371,8 @@ pub fn disable_encryption_internal(
         }
     }
     let keys_path = project_dir.join(KEYS_FILE);
-    if keys_path.exists() {
-        store::wipe_and_delete(&keys_path)?;
+    if keys_path.symlink_metadata().is_ok() {
+        store::remove_legacy_key_file(&keys_path)?;
         result.removed_files.push(keys_path);
     }
 
@@ -696,6 +705,61 @@ mod tests {
         assert_eq!(fs::read(&existing).unwrap(), b"precious existing wrap");
         assert!(f.project.join(KEYS_FILE).exists());
         assert_eq!(ui.prompt_count(), 0, "must refuse before prompting");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_migrate_refuses_symlinked_keys_file_and_writes_nothing() {
+        let f = fixture();
+        let (p, _) = legacy_setup(&f, "x");
+        let keys = f.project.join(KEYS_FILE);
+        let target = f.project.join("elsewhere");
+        fs::rename(&keys, &target).unwrap();
+        std::os::unix::fs::symlink(&target, &keys).unwrap();
+        let before = fs::read(&target).unwrap();
+        let ui = MockUi::new(vec![Some("pw"), Some("pw")]);
+        let r = migrate_encryption_with(&f.project, &ctx(&f, Some(ui), true));
+        assert!(r.is_err());
+        assert_eq!(
+            fs::read(&target).unwrap(),
+            before,
+            "target must be unchanged"
+        );
+        assert!(keys.symlink_metadata().is_ok());
+        assert!(!store::identity_path_in(&f.config, &p).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_migrate_refuses_hard_linked_keys_file_and_writes_nothing() {
+        let f = fixture();
+        let (p, _) = legacy_setup(&f, "x");
+        let keys = f.project.join(KEYS_FILE);
+        let other = f.project.join("other-link");
+        fs::hard_link(&keys, &other).unwrap();
+        let before = fs::read(&other).unwrap();
+        let ui = MockUi::new(vec![Some("pw"), Some("pw")]);
+        let r = migrate_encryption_with(&f.project, &ctx(&f, Some(ui), true));
+        assert!(r.is_err());
+        assert_eq!(fs::read(&keys).unwrap(), before);
+        assert_eq!(fs::read(&other).unwrap(), before);
+        assert!(!store::identity_path_in(&f.config, &p).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_disable_unlinks_symlinked_keys_file_without_touching_target() {
+        let f = fixture();
+        let _ = legacy_setup(&f, "legacy-secret");
+        let keys = f.project.join(KEYS_FILE);
+        let target = f.project.join("elsewhere");
+        fs::rename(&keys, &target).unwrap();
+        std::os::unix::fs::symlink(&target, &keys).unwrap();
+        let before = fs::read(&target).unwrap();
+        let c = ctx(&f, Some(MockUi::new(vec![])), true);
+        disable_encryption_internal(&f.project, &c).unwrap();
+        assert!(keys.symlink_metadata().is_err());
+        assert_eq!(fs::read(&target).unwrap(), before);
     }
 
     #[test]

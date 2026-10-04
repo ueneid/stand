@@ -351,13 +351,56 @@ pub fn remove_identity_files(public_key: &str) -> Result<Vec<PathBuf>, CryptoErr
     remove_identity_files_in(&config_dir()?, public_key)
 }
 
+/// Checks that `path` is safe to overwrite in place: a regular file (not a
+/// symlink) with a single hard link. Returns its `symlink_metadata`.
+///
+/// Overwriting through a symlink or a second hard link would destroy a file
+/// that is not the legacy key (the project directory is agent-writable).
+pub fn check_plain_single_link_file(path: &Path) -> Result<fs::Metadata, CryptoError> {
+    let meta = fs::symlink_metadata(path)?;
+    let shown = super::ui::sanitize_for_terminal(&path.display().to_string());
+    if meta.file_type().is_symlink() || !meta.file_type().is_file() {
+        return Err(CryptoError::StoreError(format!(
+            "{} is not a regular file (symlink or special file); refusing to overwrite it",
+            shown
+        )));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if meta.nlink() != 1 {
+            return Err(CryptoError::StoreError(format!(
+                "{} has {} hard links; refusing to overwrite it",
+                shown,
+                meta.nlink()
+            )));
+        }
+    }
+    Ok(meta)
+}
+
 /// Overwrites a file with zeros, fsyncs it and deletes it.
+///
+/// Refuses symlinks and files with other hard links (see
+/// [`check_plain_single_link_file`]). The opened file is compared with the
+/// checked metadata so a swap between check and open is detected.
 pub fn wipe_and_delete(path: &Path) -> Result<(), CryptoError> {
-    let len = fs::metadata(path)?.len();
+    let checked = check_plain_single_link_file(path)?;
     {
         let mut file = fs::OpenOptions::new().write(true).open(path)?;
+        let opened = file.metadata()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if opened.dev() != checked.dev() || opened.ino() != checked.ino() || opened.nlink() != 1
+            {
+                return Err(CryptoError::StoreError(
+                    "file changed while it was being opened; refusing to overwrite it".to_string(),
+                ));
+            }
+        }
         let zeros = [0u8; 4096];
-        let mut remaining = len;
+        let mut remaining = opened.len();
         while remaining > 0 {
             let n = remaining.min(zeros.len() as u64) as usize;
             file.write_all(&zeros[..n])?;
@@ -367,6 +410,21 @@ pub fn wipe_and_delete(path: &Path) -> Result<(), CryptoError> {
     }
     fs::remove_file(path)?;
     Ok(())
+}
+
+/// Removes a legacy key file. A plain single-link file is zero-overwritten
+/// first; anything else (symlink, extra hard link) only has its own directory
+/// entry unlinked, leaving any other file untouched. Returns whether the
+/// content was wiped.
+pub fn remove_legacy_key_file(path: &Path) -> Result<bool, CryptoError> {
+    match check_plain_single_link_file(path) {
+        Ok(_) => wipe_and_delete(path).map(|_| true),
+        Err(CryptoError::StoreError(_)) => {
+            fs::remove_file(path)?;
+            Ok(false)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 #[cfg(test)]
@@ -528,6 +586,70 @@ mod tests {
         fs::write(&f, vec![7u8; 10_000]).unwrap();
         wipe_and_delete(&f).unwrap();
         assert!(!f.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_wipe_and_delete_refuses_symlink_and_keeps_target() {
+        let tmp = tempdir().unwrap();
+        let target = tmp.path().join("target");
+        fs::write(&target, b"important").unwrap();
+        let link = tmp.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(wipe_and_delete(&link).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"important");
+        assert!(link.symlink_metadata().is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_wipe_and_delete_refuses_extra_hard_link() {
+        let tmp = tempdir().unwrap();
+        let a = tmp.path().join("a");
+        let b = tmp.path().join("b");
+        fs::write(&a, b"important").unwrap();
+        fs::hard_link(&a, &b).unwrap();
+        assert!(wipe_and_delete(&a).is_err());
+        assert_eq!(fs::read(&a).unwrap(), b"important");
+        assert_eq!(fs::read(&b).unwrap(), b"important");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_remove_legacy_key_file_unlinks_symlink_only() {
+        let tmp = tempdir().unwrap();
+        let target = tmp.path().join("target");
+        fs::write(&target, b"important").unwrap();
+        let link = tmp.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(!remove_legacy_key_file(&link).unwrap());
+        assert!(link.symlink_metadata().is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"important");
+
+        let plain = tmp.path().join("plain");
+        fs::write(&plain, b"k").unwrap();
+        assert!(remove_legacy_key_file(&plain).unwrap());
+        assert!(!plain.exists());
+    }
+
+    #[test]
+    fn test_write_private_file_uses_create_new_temp_and_replaces_target() {
+        let tmp = tempdir().unwrap();
+        let path = tmp.path().join("f");
+        write_private_file(&path, b"one").unwrap();
+        write_private_file(&path, b"two").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"two");
+        #[cfg(unix)]
+        {
+            // A pre-planted symlink at the target is replaced, not followed.
+            let victim = tmp.path().join("victim");
+            fs::write(&victim, b"victim").unwrap();
+            let linked = tmp.path().join("linked");
+            std::os::unix::fs::symlink(&victim, &linked).unwrap();
+            write_private_file(&linked, b"new").unwrap();
+            assert_eq!(fs::read(&victim).unwrap(), b"victim");
+            assert_eq!(fs::read(&linked).unwrap(), b"new");
+        }
     }
 
     #[test]
