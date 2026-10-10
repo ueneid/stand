@@ -240,8 +240,13 @@ pub(crate) fn reflect_change(
                 value: plain.to_string(),
             },
             _ => {
+                // Name the value being opened: it comes from the config file,
+                // not from what the user just typed.
                 let purpose = DecryptPurpose {
-                    command,
+                    command: format!(
+                        "{} [to load the inherited encrypted value of {} into this shell]",
+                        command, key
+                    ),
                     environment: Some(ctx.environment.clone()),
                     secret_count: 1,
                 };
@@ -264,6 +269,15 @@ pub(crate) fn reflect_change(
             }
         },
     };
+    if let ShellUpdate::Set { key, .. } = &update {
+        if safety::classify_variable(key) == VariableRisk::Warn {
+            eprintln!(
+                "{} exporting {} into this shell; it changes how programs run",
+                "warning:".yellow(),
+                key
+            );
+        }
+    }
     if let Err(e) = ctx.emit(&[update]) {
         eprintln!(
             "{} could not update the current shell: {}",

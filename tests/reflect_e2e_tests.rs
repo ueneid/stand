@@ -270,3 +270,28 @@ fn test_unset_with_undecryptable_fallback_unsets_variable() {
         None,
     );
 }
+
+#[test]
+fn test_unset_does_not_export_blocked_inherited_value() {
+    // An agent edited .stand.toml directly; [common] carries a shell hook.
+    let config = r#"version = "1.0"
+
+[common]
+BASH_ENV = "/nonexistent/evil.sh"
+
+[environments.dev]
+description = "Dev"
+BASH_ENV = "dev-value"
+"#;
+    check(
+        &Case {
+            config,
+            active_env: "dev",
+            preset: None,
+            commands: &["stand unset dev BASH_ENV"],
+            probe: "BASH_ENV",
+            extra_env: &[],
+        },
+        None,
+    );
+}

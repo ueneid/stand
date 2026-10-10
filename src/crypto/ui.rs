@@ -135,34 +135,95 @@ pub trait UnlockUi: Send + Sync {
 /// Plugins are untrusted: their messages are sanitized before being shown.
 const PLUGIN_MESSAGE_CHARS: usize = 1000;
 
+/// Label put in front of every message a plugin shows, so plugin output can't
+/// pass for stand's own banners and prompts.
+const PLUGIN_MESSAGE_LABEL: &str = "[age-plugin-se] ";
+
 /// Bridges [`UnlockUi`] to age plugin callbacks.
+///
+/// The plugin binary is found on PATH, so it may be a fake. It may only show
+/// labelled messages: it can never ask the human for a passphrase, a string or
+/// a yes/no answer (Touch ID uses the system dialog and needs none of these).
 #[derive(Clone)]
 pub(crate) struct UiCallbacks(pub Arc<dyn UnlockUi>);
 
 impl age::Callbacks for UiCallbacks {
     fn display_message(&self, message: &str) {
-        self.0
-            .show(&sanitize_with_limit(message, PLUGIN_MESSAGE_CHARS));
+        self.0.show(&format!(
+            "{}{}",
+            PLUGIN_MESSAGE_LABEL,
+            sanitize_with_limit(message, PLUGIN_MESSAGE_CHARS)
+        ));
     }
 
-    fn confirm(&self, message: &str, _yes: &str, _no: Option<&str>) -> Option<bool> {
-        self.0
-            .confirm(&sanitize_with_limit(message, PLUGIN_MESSAGE_CHARS))
+    fn confirm(&self, _message: &str, _yes: &str, _no: Option<&str>) -> Option<bool> {
+        None
     }
 
     fn request_public_string(&self, _description: &str) -> Option<String> {
         None
     }
 
-    fn request_passphrase(&self, description: &str) -> Option<SecretString> {
-        self.0
-            .request_passphrase(&sanitize_with_limit(description, PLUGIN_MESSAGE_CHARS))
+    fn request_passphrase(&self, _description: &str) -> Option<SecretString> {
+        None
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Records every interaction; answers yes and a fixed passphrase.
+    #[derive(Default)]
+    struct RecordingUi {
+        shown: std::sync::Mutex<Vec<String>>,
+        asked: std::sync::Mutex<usize>,
+    }
+
+    impl UnlockUi for RecordingUi {
+        fn show(&self, message: &str) {
+            self.shown.lock().unwrap().push(message.to_string());
+        }
+        fn request_passphrase(&self, _prompt: &str) -> Option<SecretString> {
+            *self.asked.lock().unwrap() += 1;
+            Some(SecretString::from("secret".to_string()))
+        }
+        fn confirm(&self, _message: &str) -> Option<bool> {
+            *self.asked.lock().unwrap() += 1;
+            Some(true)
+        }
+    }
+
+    #[test]
+    fn test_plugin_cannot_request_the_passphrase() {
+        use age::Callbacks;
+        let ui = Arc::new(RecordingUi::default());
+        let cb = UiCallbacks(ui.clone());
+        assert!(cb
+            .request_passphrase("Enter passphrase to unlock the stand key")
+            .is_none());
+        assert_eq!(*ui.asked.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_plugin_cannot_ask_for_confirmation() {
+        use age::Callbacks;
+        let ui = Arc::new(RecordingUi::default());
+        let cb = UiCallbacks(ui.clone());
+        assert!(cb.confirm("Unlock anyway?", "yes", Some("no")).is_none());
+        assert_eq!(*ui.asked.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_plugin_messages_are_labelled_as_plugin_output() {
+        use age::Callbacks;
+        let ui = Arc::new(RecordingUi::default());
+        let cb = UiCallbacks(ui.clone());
+        cb.display_message("Enter passphrase to unlock the stand key:");
+        let shown = ui.shown.lock().unwrap();
+        assert_eq!(shown.len(), 1);
+        assert!(shown[0].starts_with("[age-plugin-se] "), "{}", shown[0]);
+    }
 
     #[test]
     fn test_sanitize_escapes_terminal_control_sequences() {

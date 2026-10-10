@@ -8,6 +8,7 @@
 // Limitation: the wrapper is only installed for bash, zsh and fish. Other
 // shells get no wrapper, so `stand set` does not affect their environment.
 
+use crate::environment::safety::{classify_variable, VariableRisk};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -34,6 +35,10 @@ pub enum ShellUpdate {
 pub enum ReflectError {
     #[error("invalid variable name for shell update: {0}")]
     InvalidName(String),
+    #[error(
+        "refusing to export {0} into the shell: it can inject code (shell startup or loader hook)"
+    )]
+    Blocked(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -57,13 +62,20 @@ fn is_valid_name(key: &str) -> bool {
 
 /// Render one update as a single shell line ending with a newline.
 ///
-/// Rejects keys not matching `^[A-Za-z_][A-Za-z0-9_]*$` or starting with `STAND_`.
+/// Rejects keys not matching `^[A-Za-z_][A-Za-z0-9_]*$` or starting with `STAND_`,
+/// and refuses to export Blocked names (see [`crate::environment::safety`]):
+/// an inherited value from an edited `.stand.toml` must not reach the live
+/// shell when `shell`/`exec` would refuse it at startup. Unsetting is allowed.
 pub fn render(update: &ShellUpdate, kind: ShellKind) -> Result<String, ReflectError> {
     let key = match update {
         ShellUpdate::Set { key, .. } | ShellUpdate::Unset { key } => key,
     };
     if !is_valid_name(key) {
         return Err(ReflectError::InvalidName(key.clone()));
+    }
+    if matches!(update, ShellUpdate::Set { .. }) && classify_variable(key) == VariableRisk::Blocked
+    {
+        return Err(ReflectError::Blocked(key.clone()));
     }
     Ok(match (update, kind) {
         (ShellUpdate::Set { key, value }, ShellKind::Posix) => {
@@ -221,6 +233,30 @@ end
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_render_refuses_to_export_blocked_names() {
+        for name in [
+            "LD_PRELOAD",
+            "bash_env",
+            "DYLD_INSERT_LIBRARIES",
+            "PROMPT_COMMAND",
+        ] {
+            assert!(
+                render(&set(name, "x"), ShellKind::Posix).is_err(),
+                "{name} must not be exported"
+            );
+            assert!(render(&set(name, "x"), ShellKind::Fish).is_err());
+        }
+    }
+
+    #[test]
+    fn test_render_still_unsets_blocked_names() {
+        assert_eq!(
+            render(&unset("LD_PRELOAD"), ShellKind::Posix).unwrap(),
+            "unset LD_PRELOAD\n"
+        );
+    }
     use serial_test::serial;
 
     fn set(k: &str, v: &str) -> ShellUpdate {

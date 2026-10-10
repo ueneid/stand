@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Each decryption is a deliberate human act and shows which command decrypts how many secrets for which environment.
 - Config values can no longer set variables such as `BASH_ENV`, `PROMPT_COMMAND`, `LD_*` or `DYLD_*` in the interactive shell.
+- Shell reflect never exports Blocked variable names, even when an `unset` falls back to an inherited value.
+- The Touch ID plugin can only show labelled messages; it can't ask for a passphrase or confirmation.
 - Secrets in use remain readable by any process of the same user. See `docs/security.md`.
 
 ## [0.2.2] - 2026-05-17
