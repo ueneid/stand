@@ -3,7 +3,15 @@
 use assert_cmd::Command;
 use std::fs;
 
-fn run(with_legacy_keys: bool) -> String {
+enum LegacyKeys {
+    None,
+    Matching,
+    /// `.stand.keys` holds a different key than `[encryption].public_key`
+    /// (e.g. the public key was swapped).
+    Mismatching,
+}
+
+fn run(legacy: LegacyKeys) -> String {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("project");
     let xdg = tmp.path().join("xdg");
@@ -18,8 +26,17 @@ fn run(with_legacy_keys: bool) -> String {
         ),
     )
     .unwrap();
-    if with_legacy_keys {
-        stand::crypto::keys::save_private_key(&dir.join(".stand.keys"), &kp.private_key).unwrap();
+    match legacy {
+        LegacyKeys::None => {}
+        LegacyKeys::Matching => {
+            stand::crypto::keys::save_private_key(&dir.join(".stand.keys"), &kp.private_key)
+                .unwrap();
+        }
+        LegacyKeys::Mismatching => {
+            let other = stand::crypto::generate_key_pair();
+            stand::crypto::keys::save_private_key(&dir.join(".stand.keys"), &other.private_key)
+                .unwrap();
+        }
     }
     let out = Command::cargo_bin("stand")
         .unwrap()
@@ -37,7 +54,7 @@ fn run(with_legacy_keys: bool) -> String {
 
 #[test]
 fn test_set_encrypt_warns_when_no_local_identity_matches() {
-    let stderr = run(false);
+    let stderr = run(LegacyKeys::None);
     assert!(
         stderr.contains("does not match any local identity"),
         "{stderr}"
@@ -47,6 +64,15 @@ fn test_set_encrypt_warns_when_no_local_identity_matches() {
 
 #[test]
 fn test_set_encrypt_does_not_warn_with_legacy_key_file() {
-    let stderr = run(true);
+    let stderr = run(LegacyKeys::Matching);
     assert!(!stderr.contains("local identity"), "{stderr}");
+}
+
+#[test]
+fn test_set_encrypt_warns_when_legacy_key_file_does_not_match_public_key() {
+    let stderr = run(LegacyKeys::Mismatching);
+    assert!(
+        stderr.contains("does not match any local identity"),
+        "{stderr}"
+    );
 }

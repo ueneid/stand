@@ -107,8 +107,13 @@ pub fn set_variable(
 }
 
 /// Warn when no local identity can decrypt what `--encrypt` is about to write.
+///
+/// A legacy `.stand.keys` counts only if its key actually matches
+/// `public_key` (it is plaintext, so this needs no unlock). Wrapped identities
+/// can't be checked without an unlock, so only their presence is checked;
+/// a same-user process could forge that, so this is a speed bump, not a proof.
 fn warn_if_unpinned(project_dir: &Path, public_key: &str) {
-    if project_dir.join(".stand.keys").exists() {
+    if legacy_key_matches(&project_dir.join(".stand.keys"), public_key) {
         return;
     }
     let has_identity = crate::crypto::store::config_dir()
@@ -124,6 +129,14 @@ fn warn_if_unpinned(project_dir: &Path, public_key: &str) {
             "warning:".yellow()
         );
     }
+}
+
+/// Whether the legacy key file at `path` holds the private key for `public_key`.
+fn legacy_key_matches(path: &Path, public_key: &str) -> bool {
+    crate::crypto::keys::load_private_key(path)
+        .and_then(|key| crate::crypto::keys::parse_private_key(&key))
+        .map(|identity| identity.to_public().to_string() == public_key)
+        .unwrap_or(false)
 }
 
 /// The enclosing `stand shell` of `project_dir`, if this process runs inside one.
