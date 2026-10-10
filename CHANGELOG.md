@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-10-10
 
 ### Breaking
 
@@ -48,6 +48,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shell reflect never exports Blocked variable names, even when an `unset` falls back to an inherited value.
 - The Touch ID plugin can only show labelled messages; it can't ask for a passphrase or confirmation.
 - Secrets in use remain readable by any process of the same user. See `docs/security.md`.
+
+### Internal
+
+- Updated dependencies: `anyhow` 1.0.104 (RUSTSEC-2026-0190), `thiserror` 2.0.21,
+  `clap` 4.6.7, `serde` 1.0.229, `serde_json` 1.0.151, `toml_edit` 0.25.12,
+  `rpassword` 7.5.4, `indexmap` 2.14.2. `age` now enables the `plugin` feature,
+  and `tempfile` is a runtime dependency.
+- CI: ignored the unmaintained `proc-macro-error2` advisory (transitive via
+  `age`), fixed clippy findings on Rust 1.98+, and bumped GitHub Actions.
 
 ## [0.2.2] - 2026-05-17
 
@@ -120,6 +129,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nested shell prevention
 - Confirmation prompts for protected environments
 
+[0.3.0]: https://github.com/ueneid/stand/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/ueneid/stand/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/ueneid/stand/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ueneid/stand/compare/v0.1.1...v0.2.0
