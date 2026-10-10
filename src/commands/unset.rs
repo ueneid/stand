@@ -54,10 +54,10 @@ pub fn unset_variable(
         });
     }
 
-    let reflect = super::set::reflect_context_for(project_dir);
-    let before = reflect
+    let shell = super::set::ShellTarget::for_project(project_dir);
+    let before = shell
         .as_ref()
-        .and_then(|ctx| super::set::effective_value(project_dir, &ctx.environment, key));
+        .and_then(|shell| super::set::effective_value(project_dir, shell.environment(), key));
 
     // Write to the existing path so file permissions are preserved.
     fs::write(&config_path, doc.to_string())?;
@@ -69,15 +69,8 @@ pub fn unset_variable(
         environment
     );
 
-    if let Some(ctx) = reflect {
-        super::set::reflect_change(
-            &ctx,
-            project_dir,
-            key,
-            before,
-            None,
-            format!("stand unset {} {}", ctx.environment, key),
-        );
+    if let Some(shell) = shell {
+        shell.apply(project_dir, "unset", key, before, None);
     }
 
     Ok(())

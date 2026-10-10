@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `stand unset <environment> <key>` removes a variable from an environment.
-- Shell reflect: inside `stand shell` (bash, zsh, fish), `stand set` and `stand unset` update the current shell immediately.
+- Shell reflect: inside `stand shell` (bash, zsh, fish), `stand set` and `stand unset` update the current shell immediately. If stand runs inside a stand shell but can't update it (called by full path, or the shell was started by an older stand), it warns instead of failing silently.
 - `stand encrypt enable [--touch-id]`, `stand encrypt migrate`, `stand encrypt add-touch-id`, and an updated `stand encrypt disable`.
 - Touch ID unlock through a Secure Enclave key (`age-plugin-se`, macOS 14+).
 - Variable name guards: names must match `^[A-Za-z_][A-Za-z0-9_]*$`. Hook-planting names are refused (ASCII case-insensitive). Risky names (`PATH`, `NODE_OPTIONS`, `NODE_PATH`, `JAVA_TOOL_OPTIONS`, ...) produce a warning.

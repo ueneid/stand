@@ -14,7 +14,7 @@ use crate::crypto::{
     decrypt_single_value, encrypt_value, is_encrypted, CryptoError, DecryptPurpose,
 };
 use crate::environment::safety::{self, VariableRisk};
-use crate::shell::{ReflectContext, ShellUpdate};
+use crate::shell::{unreflectable_environment, ReflectContext, ShellUpdate};
 
 /// Set a variable in the configuration file.
 ///
@@ -74,10 +74,10 @@ pub fn set_variable(
     };
 
     // Reflection into the enclosing `stand shell`, if any
-    let reflect = reflect_context_for(project_dir);
-    let before = reflect
+    let shell = ShellTarget::for_project(project_dir);
+    let before = shell
         .as_ref()
-        .and_then(|ctx| effective_value(project_dir, &ctx.environment, key));
+        .and_then(|shell| effective_value(project_dir, shell.environment(), key));
 
     // Update the TOML file
     update_toml_variable(&config_path, environment, key, &final_value)?;
@@ -98,16 +98,9 @@ pub fn set_variable(
         );
     }
 
-    if let Some(ctx) = reflect {
+    if let Some(shell) = shell {
         let written = encrypt.then_some((final_value.as_str(), plain_value.as_str()));
-        reflect_change(
-            &ctx,
-            project_dir,
-            key,
-            before,
-            written,
-            format!("stand set {} {}", ctx.environment, key),
-        );
+        shell.apply(project_dir, "set", key, before, written);
     }
 
     Ok(())
@@ -133,9 +126,63 @@ fn warn_if_unpinned(project_dir: &Path, public_key: &str) {
     }
 }
 
-/// The reflect context if this process runs inside a `stand shell` of `project_dir`.
-pub(crate) fn reflect_context_for(project_dir: &Path) -> Option<ReflectContext> {
-    ReflectContext::from_env().filter(|ctx| ctx.applies_to(project_dir))
+/// The enclosing `stand shell` of `project_dir`, if this process runs inside one.
+pub(crate) enum ShellTarget {
+    /// The shell can be updated through the `stand` shell function.
+    Reflect(ReflectContext),
+    /// The shell can't be updated (stand was not run through the shell
+    /// function); holds the shell's active environment.
+    Unreachable(String),
+}
+
+impl ShellTarget {
+    pub(crate) fn for_project(project_dir: &Path) -> Option<Self> {
+        if let Some(ctx) = ReflectContext::from_env().filter(|ctx| ctx.applies_to(project_dir)) {
+            return Some(Self::Reflect(ctx));
+        }
+        unreflectable_environment(project_dir).map(Self::Unreachable)
+    }
+
+    pub(crate) fn environment(&self) -> &str {
+        match self {
+            Self::Reflect(ctx) => &ctx.environment,
+            Self::Unreachable(environment) => environment,
+        }
+    }
+
+    /// Apply the change of `key` to the shell, or tell the user it wasn't applied.
+    ///
+    /// `subcommand` is `set` or `unset`; `written` is as in [`reflect_change`].
+    pub(crate) fn apply(
+        &self,
+        project_dir: &Path,
+        subcommand: &str,
+        key: &str,
+        before: Option<String>,
+        written: Option<(&str, &str)>,
+    ) {
+        match self {
+            Self::Reflect(ctx) => reflect_change(
+                ctx,
+                project_dir,
+                key,
+                before,
+                written,
+                format!("stand {} {} {}", subcommand, ctx.environment, key),
+            ),
+            Self::Unreachable(environment) => {
+                if before != effective_value(project_dir, environment, key) {
+                    eprintln!(
+                        "{} this shell was not updated: {} changed for the active environment '{}', but stand did not run through the `stand` shell function. Inside the stand shell, run `stand {} ...` without a path, or restart the shell to load the change.",
+                        "warning:".yellow(),
+                        key,
+                        environment,
+                        subcommand
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// The effective value of `key` in `environment` (inheritance and interpolation applied).

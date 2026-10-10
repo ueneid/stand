@@ -351,7 +351,7 @@ Inside `stand shell <env>` (bash, zsh, fish), `stand set` and `stand unset` upda
 - Only changes that affect the active environment are applied. Stand compares the effective value (`common`, `extends` and `${VAR}` interpolation resolved) of the key for the active environment before and after the write. Unchanged means nothing is sent; a removed value becomes `unset`; a new value is exported.
 - `set --encrypt` applies the plaintext you typed without an unlock. An inherited encrypted value (for example after `unset`) is decrypted with the normal unlock; if that fails, the variable is unset and a warning asks you to restart the stand shell.
 - If the shell cannot be updated, Stand prints a warning. The configuration was already written, so the exit code stays 0.
-- Calling the binary by its full path bypasses the function, so nothing is reflected.
+- Calling the binary by its full path bypasses the function, so nothing is reflected. The same happens in a shell started by an older stand that didn't define the function. In both cases, if the change affects the active environment, stand prints a warning (`this shell was not updated`) telling you to run `stand set`/`stand unset` without a path or to restart the shell.
 - Other shells have no reflect. Restart `stand shell` to see changes.
 
 ## Error Handling

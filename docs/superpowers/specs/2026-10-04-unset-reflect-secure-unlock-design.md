@@ -77,7 +77,7 @@ Inside `stand shell <env>` (bash, zsh, fish) the subshell defines a `stand` shel
 - The effective value of the key for the active environment (`common`, `extends` and `${VAR}` interpolation resolved) is captured before and after the write. Unchanged: nothing is sent. Removed: `unset`. Plain: `set`.
 - Encrypted result: if it is the ciphertext this `set` just wrote, the plaintext is applied without an unlock. Otherwise (for example `unset` falls back to an inherited encrypted value) Stand asks to unlock and applies the decrypted value. If decryption fails, the variable is unset and a warning asks the user to restart the stand shell.
 - A failure to write to the shell is only a warning; the configuration was already written and the exit code stays 0.
-- Limits: calling the binary by full path bypasses the function; other shells have no reflect.
+- Limits: calling the binary by full path (or from a shell started by an older stand) bypasses the function; other shells have no reflect. When stand detects it runs inside a stand shell of the same project without the reflect fd and the active environment's value changed, it prints a warning instead of failing silently.
 - Temp dirs for zsh/bash init are random and `0700`.
 
 ### `env`

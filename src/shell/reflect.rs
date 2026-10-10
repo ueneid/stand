@@ -87,6 +87,33 @@ fn quote_fish(s: &str) -> String {
     format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
 }
 
+/// Compare project paths canonically; fall back to a plain compare if either
+/// path can't be canonicalized.
+fn same_project(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+/// The active environment of an enclosing `stand shell` for `project_dir`
+/// that this process cannot update.
+///
+/// That happens when stand runs inside a stand shell but not through the
+/// `stand` shell function (e.g. called by its full path, or the shell was
+/// started by an older stand that didn't define the function).
+pub fn unreflectable_environment(project_dir: &Path) -> Option<String> {
+    if ReflectContext::from_env().is_some() {
+        return None;
+    }
+    if std::env::var("STAND_ACTIVE").ok()? != "1" {
+        return None;
+    }
+    let environment = std::env::var("STAND_ENVIRONMENT").ok()?;
+    let project_root = PathBuf::from(std::env::var("STAND_PROJECT_ROOT").ok()?);
+    same_project(&project_root, project_dir).then_some(environment)
+}
+
 impl ReflectContext {
     /// Some only if STAND_ACTIVE=1, STAND_ENVIRONMENT, STAND_PROJECT_ROOT,
     /// STAND_SHELL_FD="3" and a valid STAND_SHELL_KIND are all present.
@@ -114,10 +141,7 @@ impl ReflectContext {
 
     /// Whether `project_dir` is the same project as STAND_PROJECT_ROOT.
     pub fn applies_to(&self, project_dir: &Path) -> bool {
-        match (self.project_root.canonicalize(), project_dir.canonicalize()) {
-            (Ok(a), Ok(b)) => a == b,
-            _ => self.project_root == project_dir,
-        }
+        same_project(&self.project_root, project_dir)
     }
 
     /// Render all updates and write them to the fd. Writes nothing if any

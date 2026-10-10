@@ -168,5 +168,5 @@ Stated honestly:
   - Do not start AI agents inside a `stand shell`.
   - Prefer `stand exec` for short-lived commands.
 - **Key pinning is a speed bump.** `stand set --encrypt` warns (it does not block) if the project's public key matches no local identity and there is no `.stand.keys`, which detects a swapped key; the value may then be decryptable only by someone else, so check `[encryption].public_key`. A same-user attacker can forge a local identity.
-- **Reflect in `stand shell`** evals quoted lines produced by the `stand` binary. Calling the binary by full path bypasses the shell function (no reflect). If an `unset` falls back to an inherited encrypted value and it cannot be decrypted, the variable is removed from the shell and a warning asks you to restart the stand shell.
+- **Reflect in `stand shell`** evals quoted lines produced by the `stand` binary. Calling the binary by full path bypasses the shell function (no reflect); stand then warns that the shell was not updated. If an `unset` falls back to an inherited encrypted value and it cannot be decrypted, the variable is removed from the shell and a warning asks you to restart the stand shell.
 - **Same-user file access.** An agent that can read your files can read the passphrase-wrapped key. It is protected by the passphrase strength only. Use a strong passphrase and the sandbox above.
