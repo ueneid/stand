@@ -1,7 +1,8 @@
 // exec.rs command implementation
 
 use crate::config::loader;
-use crate::crypto::decrypt_variables;
+use crate::crypto::{decrypt_variables, DecryptPurpose};
+use crate::environment::safety;
 use crate::process::executor::CommandExecutor;
 use anyhow::{anyhow, Result};
 use std::io::{self, IsTerminal, Write};
@@ -36,6 +37,34 @@ fn prompt_confirmation(env_name: &str) -> Result<bool> {
     Ok(response == "y" || response == "yes")
 }
 
+/// Refuse blocked variable names and warn about risky ones before injection.
+///
+/// `set` already rejects these names, but `.stand.toml` can be edited by hand,
+/// so every injection point (exec, shell) must check again, before any
+/// confirmation or decryption.
+pub(crate) fn enforce_injection_safety<'a, I: IntoIterator<Item = &'a str>>(
+    names: I,
+    target: &str,
+) -> Result<()> {
+    let report = safety::find_risky_variables(names);
+    if !report.blocked.is_empty() {
+        return Err(anyhow!(
+            "Refusing to load blocked variable(s): {}\n\
+             These names can inject code into the {} (shell startup or loader hooks). \
+             Remove them from .stand.toml.",
+            report.blocked.join(", "),
+            target
+        ));
+    }
+    if !report.warned.is_empty() {
+        eprintln!(
+            "warning: {} can change how programs behave or load code; make sure you trust these values",
+            report.warned.join(", ")
+        );
+    }
+    Ok(())
+}
+
 /// Execute a command with the specified environment
 ///
 /// # Arguments
@@ -62,6 +91,9 @@ pub fn execute_with_environment(
             available.join(", ")
         )
     })?;
+
+    // Refuse code-injecting variable names before confirmation or decryption
+    enforce_injection_safety(env.variables.keys().map(String::as_str), "process")?;
 
     // Check if confirmation is required
     if env.requires_confirmation.unwrap_or(false) && !skip_confirmation {
@@ -91,7 +123,11 @@ pub fn execute_with_environment(
     let args = command[1..].to_vec();
 
     // Decrypt any encrypted variables
-    let decrypted_vars = decrypt_variables(env.variables.clone(), project_path)
+    let purpose = DecryptPurpose::new(
+        format!("stand exec {} -- {}", env_name, command.join(" ")),
+        Some(env_name),
+    );
+    let decrypted_vars = decrypt_variables(env.variables.clone(), project_path, &purpose)
         .map_err(|e| anyhow!("Failed to decrypt variables: {}", e))?;
 
     // Execute command with environment variables

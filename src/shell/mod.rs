@@ -1,5 +1,6 @@
 pub mod detector;
 pub mod prompt;
+pub mod reflect;
 pub mod spawner;
 
 // Re-export commonly used items
@@ -8,6 +9,10 @@ pub use detector::{
     is_stand_shell_active, ShellType,
 };
 pub use prompt::{generate_prompt_prefix, get_prompt_env_vars, STAND_AUTO_EXIT, STAND_PROMPT};
+pub use reflect::{
+    render, unreflectable_environment, wrapper_function, ReflectContext, ReflectError, ShellKind,
+    ShellUpdate,
+};
 pub use spawner::{
     build_shell_environment, spawn_shell, STAND_ACTIVE, STAND_ENVIRONMENT, STAND_PROJECT_ROOT,
 };

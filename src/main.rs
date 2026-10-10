@@ -1,6 +1,8 @@
 use clap::Parser;
 use stand::cli::commands::{Cli, Commands, EncryptCommands};
-use stand::commands::{current, encrypt, env, exec, get, init, list, set, shell, show, validate};
+use stand::commands::{
+    current, encrypt, env, exec, get, init, list, set, shell, show, unset, validate,
+};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -15,7 +17,7 @@ fn main() -> anyhow::Result<()> {
 
             // If --encrypt flag is set, also enable encryption
             if enable_encrypt {
-                if let Err(e) = encrypt::enable_encryption(&current_dir) {
+                if let Err(e) = encrypt::enable_encryption(&current_dir, false) {
                     eprintln!("Error: Failed to enable encryption: {}", e);
                     std::process::exit(1);
                 }
@@ -85,6 +87,16 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        Commands::Unset { environment, key } => {
+            let current_dir = std::env::current_dir()?;
+            match unset::unset_variable(&current_dir, &environment, &key) {
+                Ok(()) => {}
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
         Commands::Set {
             environment,
             key,
@@ -115,14 +127,26 @@ fn main() -> anyhow::Result<()> {
         Commands::Encrypt(subcmd) => {
             let current_dir = std::env::current_dir()?;
             match subcmd {
-                EncryptCommands::Enable => {
-                    if let Err(e) = encrypt::enable_encryption(&current_dir) {
+                EncryptCommands::Enable { touch_id } => {
+                    if let Err(e) = encrypt::enable_encryption(&current_dir, touch_id) {
                         eprintln!("Error: {}", e);
                         std::process::exit(1);
                     }
                 }
                 EncryptCommands::Disable => {
                     if let Err(e) = encrypt::disable_encryption(&current_dir) {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+                EncryptCommands::Migrate => {
+                    if let Err(e) = encrypt::migrate_encryption(&current_dir) {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+                EncryptCommands::AddTouchId => {
+                    if let Err(e) = encrypt::add_touch_id(&current_dir) {
                         eprintln!("Error: {}", e);
                         std::process::exit(1);
                     }

@@ -8,4 +8,5 @@ pub mod list;
 pub mod set;
 pub mod shell;
 pub mod show;
+pub mod unset;
 pub mod validate;

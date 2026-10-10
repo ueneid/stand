@@ -4,7 +4,7 @@
 
 use crate::config::loader;
 use crate::config::types::NestedBehavior;
-use crate::crypto::decrypt_variables;
+use crate::crypto::{decrypt_variables, DecryptPurpose};
 use crate::shell::{
     build_shell_environment, detect_user_shell, get_active_environment, is_stand_shell_active,
     spawn_shell,
@@ -109,6 +109,9 @@ pub fn validate_shell_environment(
         )
     })?;
 
+    // Refuse code-injecting variable names before confirmation or decryption
+    super::exec::enforce_injection_safety(env.variables.keys().map(String::as_str), "shell")?;
+
     // Check if confirmation is required
     if env.requires_confirmation.unwrap_or(false) && !skip_confirmation {
         // Check if stdin is a terminal - fail fast in non-interactive environments
@@ -131,7 +134,8 @@ pub fn validate_shell_environment(
     let shell_path = shell_override.unwrap_or_else(detect_user_shell);
 
     // Decrypt any encrypted variables
-    let decrypted_vars = decrypt_variables(env.variables.clone(), project_path)
+    let purpose = DecryptPurpose::new(format!("stand shell {}", env_name), Some(env_name));
+    let decrypted_vars = decrypt_variables(env.variables.clone(), project_path, &purpose)
         .map_err(|e| anyhow!("Failed to decrypt variables: {}", e))?;
 
     // Build environment with Stand markers

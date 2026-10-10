@@ -23,6 +23,7 @@ include = [
     "docs/configuration.md",
     "docs/design.md",
     "docs/requirements.md",
+    "docs/security.md",
 ]
 
 [dependencies]
@@ -43,12 +44,13 @@ thiserror = "2.0"
 # Terminal and output
 colored = "3.1"
 rpassword = "7.3"
+tempfile = "3"
 
 # Data structures
 indexmap = { version = "2.0", features = ["serde"] }
 
 # Encryption
-age = { version = "0.11", default-features = false }
+age = { version = "0.11", default-features = false, features = ["plugin"] }
 base64 = "0.22"
 
 # Optional dependencies for development

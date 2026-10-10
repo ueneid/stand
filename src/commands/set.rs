@@ -10,7 +10,11 @@ use colored::Colorize;
 use toml_edit::DocumentMut;
 
 use crate::config::{loader, ConfigError};
-use crate::crypto::{encrypt_value, CryptoError};
+use crate::crypto::{
+    decrypt_single_value, encrypt_value, is_encrypted, CryptoError, DecryptPurpose,
+};
+use crate::environment::safety::{self, VariableRisk};
+use crate::shell::{unreflectable_environment, ReflectContext, ShellUpdate};
 
 /// Set a variable in the configuration file.
 ///
@@ -23,6 +27,23 @@ pub fn set_variable(
     value: Option<String>,
     encrypt: bool,
 ) -> Result<(), SetCommandError> {
+    // Validate the variable name before touching the configuration
+    if !safety::is_valid_variable_name(key) {
+        return Err(SetCommandError::InvalidVariableName(key.to_string()));
+    }
+    if safety::is_reserved_key(key) {
+        return Err(SetCommandError::ReservedKey(key.to_string()));
+    }
+    match safety::classify_variable(key) {
+        VariableRisk::Blocked => return Err(SetCommandError::BlockedVariable(key.to_string())),
+        VariableRisk::Warn => eprintln!(
+            "{} {} can change how programs behave or load code; make sure you trust this value",
+            "warning:".yellow(),
+            key
+        ),
+        VariableRisk::Safe => {}
+    }
+
     // Load configuration
     let config_path = project_dir.join(".stand.toml");
     let config = loader::load_config_toml(project_dir)?;
@@ -45,11 +66,18 @@ pub fn set_variable(
     let final_value = if encrypt {
         // Check if encryption is enabled
         let public_key = get_public_key(&config_path)?;
+        warn_if_unpinned(project_dir, &public_key);
         let recipient = crate::crypto::keys::parse_public_key(&public_key)?;
         encrypt_value(&plain_value, &recipient)?
     } else {
-        plain_value
+        plain_value.clone()
     };
+
+    // Reflection into the enclosing `stand shell`, if any
+    let shell = ShellTarget::for_project(project_dir);
+    let before = shell
+        .as_ref()
+        .and_then(|shell| effective_value(project_dir, shell.environment(), key));
 
     // Update the TOML file
     update_toml_variable(&config_path, environment, key, &final_value)?;
@@ -70,7 +98,193 @@ pub fn set_variable(
         );
     }
 
+    if let Some(shell) = shell {
+        let written = encrypt.then_some((final_value.as_str(), plain_value.as_str()));
+        shell.apply(project_dir, "set", key, before, written);
+    }
+
     Ok(())
+}
+
+/// Warn when no local identity can decrypt what `--encrypt` is about to write.
+///
+/// A legacy `.stand.keys` counts only if its key actually matches
+/// `public_key` (it is plaintext, so this needs no unlock). Wrapped identities
+/// can't be checked without an unlock, so only their presence is checked;
+/// a same-user process could forge that, so this is a speed bump, not a proof.
+fn warn_if_unpinned(project_dir: &Path, public_key: &str) {
+    if legacy_key_matches(&project_dir.join(".stand.keys"), public_key) {
+        return;
+    }
+    let has_identity = crate::crypto::store::config_dir()
+        .map(|dir| {
+            crate::crypto::store::identity_file_paths_in(&dir, public_key)
+                .iter()
+                .any(|p| p.exists())
+        })
+        .unwrap_or(false);
+    if !has_identity {
+        eprintln!(
+            "{} the project's public key does not match any local identity, so this value may only be decryptable by someone else; check [encryption].public_key in .stand.toml",
+            "warning:".yellow()
+        );
+    }
+}
+
+/// Whether the legacy key file at `path` holds the private key for `public_key`.
+fn legacy_key_matches(path: &Path, public_key: &str) -> bool {
+    crate::crypto::keys::load_private_key(path)
+        .and_then(|key| crate::crypto::keys::parse_private_key(&key))
+        .map(|identity| identity.to_public().to_string() == public_key)
+        .unwrap_or(false)
+}
+
+/// The enclosing `stand shell` of `project_dir`, if this process runs inside one.
+pub(crate) enum ShellTarget {
+    /// The shell can be updated through the `stand` shell function.
+    Reflect(ReflectContext),
+    /// The shell can't be updated (stand was not run through the shell
+    /// function); holds the shell's active environment.
+    Unreachable(String),
+}
+
+impl ShellTarget {
+    pub(crate) fn for_project(project_dir: &Path) -> Option<Self> {
+        if let Some(ctx) = ReflectContext::from_env().filter(|ctx| ctx.applies_to(project_dir)) {
+            return Some(Self::Reflect(ctx));
+        }
+        unreflectable_environment(project_dir).map(Self::Unreachable)
+    }
+
+    pub(crate) fn environment(&self) -> &str {
+        match self {
+            Self::Reflect(ctx) => &ctx.environment,
+            Self::Unreachable(environment) => environment,
+        }
+    }
+
+    /// Apply the change of `key` to the shell, or tell the user it wasn't applied.
+    ///
+    /// `subcommand` is `set` or `unset`; `written` is as in [`reflect_change`].
+    pub(crate) fn apply(
+        &self,
+        project_dir: &Path,
+        subcommand: &str,
+        key: &str,
+        before: Option<String>,
+        written: Option<(&str, &str)>,
+    ) {
+        match self {
+            Self::Reflect(ctx) => reflect_change(
+                ctx,
+                project_dir,
+                key,
+                before,
+                written,
+                format!("stand {} {} {}", subcommand, ctx.environment, key),
+            ),
+            Self::Unreachable(environment) => {
+                if before != effective_value(project_dir, environment, key) {
+                    eprintln!(
+                        "{} this shell was not updated: {} changed for the active environment '{}', but stand did not run through the `stand` shell function. Inside the stand shell, run `stand {} ...` without a path, or restart the shell to load the change.",
+                        "warning:".yellow(),
+                        key,
+                        environment,
+                        subcommand
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// The effective value of `key` in `environment` (inheritance and interpolation applied).
+pub(crate) fn effective_value(project_dir: &Path, environment: &str, key: &str) -> Option<String> {
+    let config = loader::load_config_toml_with_inheritance(project_dir).ok()?;
+    config
+        .environments
+        .get(environment)?
+        .variables
+        .get(key)
+        .cloned()
+}
+
+/// Reflect the change of `key`'s effective value into the enclosing shell.
+///
+/// `written` is `(ciphertext, plaintext)` of the value this command just wrote,
+/// which lets us skip an unlock. Failures only produce warnings: the
+/// configuration was already written.
+pub(crate) fn reflect_change(
+    ctx: &ReflectContext,
+    project_dir: &Path,
+    key: &str,
+    before: Option<String>,
+    written: Option<(&str, &str)>,
+    command: String,
+) {
+    let after = effective_value(project_dir, &ctx.environment, key);
+    if before == after {
+        return;
+    }
+    let update = match after {
+        None => ShellUpdate::Unset {
+            key: key.to_string(),
+        },
+        Some(v) if !is_encrypted(&v) => ShellUpdate::Set {
+            key: key.to_string(),
+            value: v,
+        },
+        Some(v) => match written {
+            Some((cipher, plain)) if cipher == v => ShellUpdate::Set {
+                key: key.to_string(),
+                value: plain.to_string(),
+            },
+            _ => {
+                // Name the value being opened: it comes from the config file,
+                // not from what the user just typed.
+                let purpose = DecryptPurpose {
+                    command: format!(
+                        "{} [to load the inherited encrypted value of {} into this shell]",
+                        command, key
+                    ),
+                    environment: Some(ctx.environment.clone()),
+                    secret_count: 1,
+                };
+                match decrypt_single_value(&v, project_dir, &purpose) {
+                    Ok(plain) => ShellUpdate::Set {
+                        key: key.to_string(),
+                        value: plain,
+                    },
+                    Err(_) => {
+                        eprintln!(
+                            "{} the inherited encrypted value of {} could not be applied to this shell; restart the stand shell to load it",
+                            "warning:".yellow(),
+                            key
+                        );
+                        ShellUpdate::Unset {
+                            key: key.to_string(),
+                        }
+                    }
+                }
+            }
+        },
+    };
+    if let ShellUpdate::Set { key, .. } = &update {
+        if safety::classify_variable(key) == VariableRisk::Warn {
+            eprintln!(
+                "{} exporting {} into this shell; it changes how programs run",
+                "warning:".yellow(),
+                key
+            );
+        }
+    }
+    if let Err(e) = ctx.emit(&[update]) {
+        eprintln!(
+            "{} could not update the current shell: {}",
+            "warning:".yellow(),
+            e
+        );
+    }
 }
 
 /// Prompts for a secret value without echoing to the terminal.
@@ -136,6 +350,17 @@ fn update_toml_variable(
 pub enum SetCommandError {
     #[error("Environment not found: {0}")]
     EnvironmentNotFound(String),
+
+    #[error("Invalid variable name: {0} (use letters, digits and underscores; do not start with a digit)")]
+    InvalidVariableName(String),
+
+    #[error(
+        "'{0}' is an environment setting, not a variable. Edit .stand.toml directly to change it."
+    )]
+    ReservedKey(String),
+
+    #[error("'{0}' is blocked: it can inject code into the shell that loads these variables")]
+    BlockedVariable(String),
 
     #[error("Value is required when not encrypting")]
     ValueRequired,
@@ -286,5 +511,54 @@ description = "Development"
             !content.contains("secret-value"),
             "Plain value should not appear in config file"
         );
+    }
+
+    fn write_basic(dir: &Path) {
+        fs::write(
+            dir.join(".stand.toml"),
+            "version = \"1.0\"\n\n[environments.dev]\ndescription = \"Development\"\n",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_set_reserved_key_rejected() {
+        let dir = tempdir().unwrap();
+        write_basic(dir.path());
+        let r = set_variable(dir.path(), "dev", "description", Some("x".into()), false);
+        assert!(matches!(r, Err(SetCommandError::ReservedKey(_))));
+    }
+
+    #[test]
+    fn test_set_blocked_variables_rejected() {
+        let dir = tempdir().unwrap();
+        write_basic(dir.path());
+        for k in ["BASH_ENV", "LD_PRELOAD"] {
+            let r = set_variable(dir.path(), "dev", k, Some("x".into()), false);
+            assert!(matches!(r, Err(SetCommandError::BlockedVariable(_))), "{k}");
+        }
+        let content = fs::read_to_string(dir.path().join(".stand.toml")).unwrap();
+        assert!(!content.contains("BASH_ENV"));
+    }
+
+    #[test]
+    fn test_set_warned_variable_allowed() {
+        let dir = tempdir().unwrap();
+        write_basic(dir.path());
+        let r = set_variable(dir.path(), "dev", "PATH", Some("/bin".into()), false);
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn test_set_invalid_variable_name_rejected() {
+        let dir = tempdir().unwrap();
+        write_basic(dir.path());
+        for k in ["1BAD", "A-B"] {
+            let r = set_variable(dir.path(), "dev", k, Some("x".into()), false);
+            assert!(
+                matches!(r, Err(SetCommandError::InvalidVariableName(_))),
+                "{k}"
+            );
+        }
     }
 }
