@@ -243,18 +243,18 @@ fn interpolate_string(input: &str) -> Result<String, ConfigError> {
 fn interpolate_configuration(config: &mut Configuration) -> Result<(), ConfigError> {
     // Interpolate common variables
     if let Some(ref mut common) = config.common {
-        for (_, value) in common.iter_mut() {
+        for value in common.values_mut() {
             *value = interpolate_string(value)?;
         }
     }
 
     // Interpolate environment variables and descriptions
-    for (_, env) in config.environments.iter_mut() {
+    for env in config.environments.values_mut() {
         // Interpolate description
         env.description = interpolate_string(&env.description)?;
 
         // Interpolate all environment variables
-        for (_, value) in env.variables.iter_mut() {
+        for value in env.variables.values_mut() {
             *value = interpolate_string(value)?;
         }
     }

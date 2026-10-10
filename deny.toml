@@ -16,6 +16,11 @@ ignore = [
     # migrate to proc-macro-error2 (or another maintained alternative).
     # https://rustsec.org/advisories/RUSTSEC-2024-0370
     "RUSTSEC-2024-0370",
+    # proc-macro-error2 is unmaintained. It is transitively pulled in via
+    # age -> i18n-embed-fl. Drop this ignore once upstream migrates to a
+    # maintained alternative.
+    # https://rustsec.org/advisories/RUSTSEC-2026-0173
+    "RUSTSEC-2026-0173",
 ]
 
 [licenses]
