@@ -58,7 +58,7 @@ base64 = "0.22"
 tempfile = "3.8"
 assert_cmd = "2.0"
 predicates = "3.0"
-serial_test = "3.0"
+serial_test = "4.0"
 
 [profile.release]
 opt-level = "z"
