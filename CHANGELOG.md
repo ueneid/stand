@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- Unused legacy YAML loaders (`config::loader::load_config`, `load_config_with_validation`,
+  `load_config_with_defaults`) and `ConfigError::YamlError`, together with the deprecated
+  `serde_yaml` dependency. The CLI already read only `.stand.toml`.
+
+### Internal
+
+- cargo-deny: ignore RUSTSEC-2026-0374 (`basic-toml`, build-time only via age's i18n macros).
+- Dependabot: skip `serial_test` major updates until the MSRV reaches 1.93.1.
+
 ## [0.3.0] - 2026-10-10
 
 ### Breaking

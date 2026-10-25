@@ -21,6 +21,12 @@ ignore = [
     # maintained alternative.
     # https://rustsec.org/advisories/RUSTSEC-2026-0173
     "RUSTSEC-2026-0173",
+    # basic-toml is unmaintained. It is transitively pulled in via
+    # age -> i18n-embed-fl -> i18n-config (still present with age 0.12).
+    # It only parses i18n configuration at build time. Drop this ignore once
+    # i18n-config migrates to the `toml` crate.
+    # https://rustsec.org/advisories/RUSTSEC-2026-0374
+    "RUSTSEC-2026-0374",
 ]
 
 [licenses]
