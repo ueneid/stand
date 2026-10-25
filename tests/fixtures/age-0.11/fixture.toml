@@ -1,0 +1,7 @@
+# Throwaway test keys generated with age 0.11.x. Safe to commit.
+public_key = "age16edqvfvxzpd5m4jwlh0a7elmyua64weumh0mgcqzeey46933f9mqxkhtnx"
+passphrase = "fixture-passphrase"
+project = "/nonexistent/stand-age-0.11-fixture"
+work_factor = 8
+plaintext = "ascii-value 日本語のテキスト 🔐🚀 end"
+ciphertext = "encrypted:YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBYa1FabXVFc3AzVGRHL3JMcnM1TmxtY1hSMlVPbXptVE9MeFV3ZndhSmlFCnBQcDB1YlMzRHBLS1cwa1NtcG1oMG5waDFRWlAxYkVqYkplakZOem5qSjgKLT4gMVExKi1ncmVhc2UgTiBnbSA+IG4Kd2ZoMlAvV2oxOE1QRWJLTUpnN3FnbDhnZ2s3VzNHbEVwVEh4ZmlFMmx5T2RQV0xTU1BzTzl4LzdkRmFrR1crcgp4MGMKLS0tIGZTK2NpaCtOSW5XRkJPY1NuTUtmQTQvR1RCbURnd0tNbmlteFFsZHdkSmMKU/Wkp35qjSRxMrHG9ZxioM/YoTmLiVPm0/eQhPYk6XR20BUSQJdV1L19WYppH2cs1Ggp8ESBLODdjGwq/elLCdc5NOVZEsB1etexd9A5eTFR"

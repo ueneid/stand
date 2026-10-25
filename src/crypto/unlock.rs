@@ -552,6 +552,43 @@ mod tests {
         Arc::new(Mutex::new(vec![]))
     }
 
+    /// Cross-version regression: fixtures generated with age 0.11 must keep
+    /// unlocking and decrypting byte for byte on newer age releases.
+    ///
+    /// The fixture identity is bound to a project path that does not exist on
+    /// this machine, so the unlock goes through the normal API with a
+    /// confirm-yes mock UI (binding becomes `Confirmed`).
+    #[test]
+    fn test_age_0_11_fixtures_unlock_and_decrypt_byte_for_byte() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/age-0.11");
+        let meta: toml::Value =
+            toml::from_str(&std::fs::read_to_string(dir.join("fixture.toml")).unwrap()).unwrap();
+        let get = |k: &str| meta[k].as_str().unwrap().to_string();
+        let public_key = get("public_key");
+
+        let f = fixture();
+        let id_dir = store::ensure_identities_dir_in(&f.config).unwrap();
+        std::fs::copy(
+            dir.join("identity.age"),
+            id_dir.join(format!("{}.age", public_key)),
+        )
+        .unwrap();
+
+        let ui = MockUi::new(vec![Some(&get("passphrase"))]);
+        ui.set_confirm(Some(true));
+        let mut env = env_for(&f);
+        env.max_work_factor = Some(meta["work_factor"].as_integer().unwrap() as u8);
+        let c = ctx(env, Some(ui), MockSe::new(false, false), no_warnings());
+        let u =
+            unlock_project_identity_verified_with(&f.project, Some(&public_key), &purpose(), &c)
+                .unwrap();
+        assert!(matches!(u.binding, Binding::Confirmed));
+        assert_eq!(u.identity.to_public().to_string(), public_key);
+
+        let decrypted = crate::crypto::decrypt_value(&get("ciphertext"), &u.identity).unwrap();
+        assert_eq!(decrypted.as_bytes(), get("plaintext").as_bytes());
+    }
+
     #[test]
     fn test_passphrase_unlock_succeeds_and_shows_banner_first() {
         let f = fixture();
