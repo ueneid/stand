@@ -44,6 +44,11 @@ updates:
       # It is a dev-dependency only; revisit when the MSRV is raised.
       - dependency-name: "serial_test"
         update-types: ["version-update:semver-major"]
+      # age 0.12 pulls in p256 -> crypto-bigint 0.5.5 (RUSTSEC-2026-0387).
+      # stand never uses P-256, but cargo-deny rejects the advisory. Stay on
+      # 0.11.x and drop this entry once age depends on crypto-bigint >= 0.7.6.
+      - dependency-name: "age"
+        versions: [">= 0.12, < 0.13"]
 
   # GitHub Actions used in workflows (.github/workflows/*.yml).
   # `cooldown` is not supported for this ecosystem (no SemVer guarantee), so we

@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - cargo-deny: ignore RUSTSEC-2026-0374 (`basic-toml`, build-time only via age's i18n macros).
 - Dependabot: skip `serial_test` major updates until the MSRV reaches 1.93.1.
+- Dependabot: skip age 0.12.x, which pulls in `crypto-bigint` 0.5.5 (RUSTSEC-2026-0387).
+- Tests: add age 0.11 fixtures that must keep unlocking and decrypting after future age upgrades.
 
 ## [0.3.0] - 2026-10-10
 
