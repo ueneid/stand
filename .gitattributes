@@ -1,0 +1,2 @@
+# Encrypted test fixtures must be byte-exact (no line-ending conversion).
+*.age binary
