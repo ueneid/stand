@@ -57,7 +57,7 @@ graph TB
 ### 2.2 Key Dependencies
 
 - **clap** (v4): Command-line argument parsing with derive macros
-- **serde** + **serde_yaml**: Configuration file parsing
+- **serde** + **toml** / **toml_edit**: Configuration file parsing and format-preserving edits
 - **anyhow**: Simplified error handling
 - **colored**: Terminal output formatting
 - **indexmap**: Order-preserving hash maps for environment variables
@@ -203,9 +203,9 @@ DEBUG = "false"
 ### 5.3 Configuration Discovery and Migration
 
 **Discovery Precedence:**
-Stand discovers configuration in the following order:
-1. `.stand.toml` (preferred TOML format)
-2. `.stand/config.yaml` (legacy format, deprecated)
+Stand reads configuration only from `.stand.toml`.
+The legacy `.stand/config.yaml` format is no longer read; convert it to
+`.stand.toml` as described below.
 
 **Migration from YAML to TOML:**
 To migrate from legacy YAML configuration:

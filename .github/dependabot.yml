@@ -39,6 +39,11 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # serial_test 4.x requires rustc 1.93.1, above our MSRV (rust-version = 1.88).
+      # It is a dev-dependency only; revisit when the MSRV is raised.
+      - dependency-name: "serial_test"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions used in workflows (.github/workflows/*.yml).
   # `cooldown` is not supported for this ecosystem (no SemVer guarantee), so we

@@ -39,12 +39,6 @@ pub enum ConfigError {
         source: std::io::Error,
     },
 
-    #[error("YAML parsing error: {source}")]
-    YamlError {
-        #[from]
-        source: serde_yaml::Error,
-    },
-
     #[error("TOML parsing error: {source}")]
     TomlError {
         #[from]
