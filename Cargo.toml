@@ -50,7 +50,7 @@ indexmap = { version = "2.0", features = ["serde"] }
 
 # Encryption
 age = { version = "0.11", default-features = false, features = ["plugin"] }
-base64 = "0.22"
+base64 = "0.23"
 
 # Optional dependencies for development
 [dev-dependencies]
